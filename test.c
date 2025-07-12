@@ -16,10 +16,16 @@ void launch(struct Server *server) {
 
   printf("%s\n", buffer);
 
-  char *hello = "HTTP/1.1 200 OK\nDate: Sat, 12 Jul 2025 14:00:00 GMT\nServer: Apache/2.2.14 (Win32)\nLast-Modified: Wed, 22 Jul 2009 19:15:56 GMT\nContent-Length: 88\nContent-Type: text/html\nConnection: Closed\n<html><body><h1>Homo Deus</h1></body></html>";
+  char *hello =
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Type: text/html\r\n"
+    "Content-Length: 51\r\n"
+    "Connection: close\r\n"
+    "\r\n"
+    "<html><body><h1>Homo Deus</h1></body></html>";
 
   write(new_socket, hello, strlen(hello));
-  
+
   close(new_socket);
 }
 

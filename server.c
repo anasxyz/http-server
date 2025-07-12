@@ -32,10 +32,10 @@ struct Server server_constructor(
 
   // create server socket using socket() system call
   // returns a file descriptor for the new socket if successful, otherwise -1
-  server.socket = socket(domain, protocol, service);
+  server.socket = socket(domain, service, protocol);
 
   // if socket creation failed, print error message and exit
-  if (server.socket == 0) {
+  if (server.socket == -1) {
     perror("Failed to connect to socket...\n");
     exit(1);
   }
