@@ -25,22 +25,65 @@ void launch(struct Server *server) {
 
     printf("Received request: %s\n", buffer);
 
-    char *response =
+    /* char *response =
       "HTTP/1.1 200 OK\r\n"
       "Content-Type: text/html\r\n"
       "Content-Length: 51\r\n"
       "Connection: close\r\n"
       "\r\n"
       "<html><body><h1>Hello</h1></body></html>";
-
+    */
+    
     char *request_line = strtok(buffer, "\r\n");
     char *method = strtok(request_line, " ");
     char *path = strtok(NULL, " ");
     char *version = strtok(NULL, " ");
 
-    printf("Method: %s\n", method);
-    printf("Path: %s\n", path);
-    printf("Version: %s\n", version);
+    // routing logic
+    char *body;
+    char header[1024];
+    char response[4096];
+
+    if (strcmp(path, "/") == 0) {
+      body = "<html><body><h1>Home</h1></body></html>";
+      sprintf(header,
+              "HTTP/1.1 200 OK\r\n"
+              "Content-Type: text/html\r\n"
+              "Content-Length: %lu\r\n"
+              "Connection: close\r\n"
+              "\r\n",
+              strlen(body));
+    } else if (strcmp(path, "/about") == 0) {
+      body = "<html><body><h1>About</h1></body></html>";
+      sprintf(header,
+              "HTTP/1.1 200 OK\r\n"
+              "Content-Type: text/html\r\n"
+              "Content-Length: %lu\r\n"
+              "Connection: close\r\n"
+              "\r\n",
+              strlen(body)); 
+    } else if (strcmp(path, "/json") == 0) {
+      body = "{\"message\": \"This is a JSON response\"}";
+      sprintf(header,
+              "HTTP/1.1 200 OK\r\n"
+              "Content-Type: application/json\r\n"
+              "Content-Length: %lu\r\n"
+              "Connection: close\r\n"
+              "\r\n",
+              strlen(body));
+    } else {
+      body = "<html><body><h1>404 Not Found</h1></body></html>";
+      sprintf(header,
+              "HTTP/1.1 404 Not Found\r\n"
+              "Content-Type: text/html\r\n"
+              "Content-Length: %lu\r\n"
+              "Connection: close\r\n"
+              "\r\n",
+              strlen(body));
+    }
+
+    // build response
+    sprintf(response, "%s%s", header, body);
 
     write(new_socket, response, strlen(response));
     close(new_socket);
