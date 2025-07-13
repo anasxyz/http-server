@@ -2,7 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
 #include "client.h"
+#include "http.h"
 
 void *handle_client(void *arg) {
   struct Client *client = (struct Client *)arg;
