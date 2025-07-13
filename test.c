@@ -11,13 +11,13 @@ const char *get_mime_type(const char *path) {
   if (extension == NULL) { return "application/octet-stream"; }
 
   if (strcmp(extension, ".html") == 0 || strcmp(extension, ".htm") == 0) { return "text/html"; }
-  if (strcmp(extension, ".css")) == 0 { return "text/css"; }
-  if (strcmp(extension, ".js")) == 0 { return "text/javascript"; }
-  if (strcmp(extension, ".json")) == 0 { return "application/json"; }
-  if (strcmp(extension, ".png")) == 0 { return "image/png"; }
-  if (strcmp(extension, ".jpg")) == 0 { return "image/jpeg"; }
-  if (strcmp(extension, ".gif")) == 0 { return "image/gif"; }
-  if (strcmp(extension, ".txt")) == 0 { return "text/plain"; }
+  if (strcmp(extension, ".css") == 0) { return "text/css"; }
+  if (strcmp(extension, ".js") == 0) { return "text/javascript"; }
+  if (strcmp(extension, ".json") == 0) { return "application/json"; }
+  if (strcmp(extension, ".png") == 0) { return "image/png"; }
+  if (strcmp(extension, ".jpg") == 0) { return "image/jpeg"; }
+  if (strcmp(extension, ".gif") == 0) { return "image/gif"; }
+  if (strcmp(extension, ".txt") == 0) { return "text/plain"; }
 
   return "application/octet-stream"; // default MIME type for unknown extensions
 }
@@ -80,55 +80,78 @@ void launch(struct Server *server) {
       continue;
     }
 
-    
-
-    // routing logic
-    char *body;
-    char header[1024];
-    char response[4096];
-
+    // map URL path to file system path
+    char filepath[512];
     if (strcmp(path, "/") == 0) {
-      body = "<html><body><h1>Home</h1></body></html>";
-      sprintf(header,
-              "HTTP/1.1 200 OK\r\n"
-              "Content-Type: text/html\r\n"
-              "Content-Length: %lu\r\n"
-              "Connection: close\r\n"
-              "\r\n",
-              strlen(body));
-    } else if (strcmp(path, "/about") == 0) {
-      body = "<html><body><h1>About</h1></body></html>";
-      sprintf(header,
-              "HTTP/1.1 200 OK\r\n"
-              "Content-Type: text/html\r\n"
-              "Content-Length: %lu\r\n"
-              "Connection: close\r\n"
-              "\r\n",
-              strlen(body)); 
-    } else if (strcmp(path, "/json") == 0) {
-      body = "{\"message\": \"This is a JSON response\"}";
-      sprintf(header,
-              "HTTP/1.1 200 OK\r\n"
-              "Content-Type: application/json\r\n"
-              "Content-Length: %lu\r\n"
-              "Connection: close\r\n"
-              "\r\n",
-              strlen(body));
+      snprintf(filepath, sizeof(filepath), "www/index.html");
     } else {
-      body = "<html><body><h1>404 Not Found</h1></body></html>";
-      sprintf(header,
-              "HTTP/1.1 404 Not Found\r\n"
-              "Content-Type: text/html\r\n"
-              "Content-Length: %lu\r\n"
-              "Connection: close\r\n"
-              "\r\n",
-              strlen(body));
+      // prevent directory traversal attacks by not allowing ".."
+      if (strstr(path, "..")) {
+        char *response =
+          "HTTP/1.1 400 Bad Request\r\n"
+          "Content-Length: 0\r\n"
+          "Connection: close\r\n"
+          "\r\n";
+        write(new_socket, response, strlen(response));
+        close(new_socket);
+        continue;
+      }
+
+      snprintf(filepath, sizeof(filepath), "www/%s", path);
     }
 
-    // build response
-    sprintf(response, "%s%s", header, body);
+    // open file
+    FILE *file = fopen(filepath, "rb");
+    if (!file) {
+      // 404 not found
+      char *not_found_body = "<html><body><h1>404 Not Found</h1></body></html>";
+      char header[512];
+      snprintf(header, sizeof(header),
+               "HTTP/1.1 404 Not Found\r\n"
+               "Content-Type: text/html\r\n"
+               "Content-Length: %lu\r\n"
+               "Connection: close\r\n"
+               "\r\n",
+               strlen(not_found_body));
 
-    write(new_socket, response, strlen(response));
+      write(new_socket, header, strlen(header));
+      write(new_socket, not_found_body, strlen(not_found_body));
+      close(new_socket);
+      continue;
+    }
+
+    // get file size
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    // read file into buffer
+    char *file_buffer = malloc(file_size);
+    if (!file_buffer) {
+      fclose(file);
+      close(new_socket);
+      continue;
+    }
+    fread(file_buffer, 1, file_size, file);
+    fclose(file);
+
+    // build response header
+    const char *mime_type = get_mime_type(filepath);
+    char header[512];
+    snprintf(header, sizeof(header),
+             "HTTP/1.1 200 OK\r\n"
+             "Content-Type: %s\r\n"
+             "Content-Length: %lu\r\n"
+             "Connection: close\r\n"
+             "\r\n",
+             mime_type, file_size);
+
+    // send header + file content
+    write(new_socket, header, strlen(header));
+    write(new_socket, file_buffer, file_size);
+
+    // free memory
+    free(file_buffer);
     close(new_socket);
   }
 }
