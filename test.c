@@ -5,6 +5,23 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+const char *get_mime_type(const char *path) {
+  const char *extension = strrchr(path, '.');
+
+  if (extension == NULL) { return "application/octet-stream"; }
+
+  if (strcmp(extension, ".html") == 0 || strcmp(extension, ".htm") == 0) { return "text/html"; }
+  if (strcmp(extension, ".css")) == 0 { return "text/css"; }
+  if (strcmp(extension, ".js")) == 0 { return "text/javascript"; }
+  if (strcmp(extension, ".json")) == 0 { return "application/json"; }
+  if (strcmp(extension, ".png")) == 0 { return "image/png"; }
+  if (strcmp(extension, ".jpg")) == 0 { return "image/jpeg"; }
+  if (strcmp(extension, ".gif")) == 0 { return "image/gif"; }
+  if (strcmp(extension, ".txt")) == 0 { return "text/plain"; }
+
+  return "application/octet-stream"; // default MIME type for unknown extensions
+}
+
 void launch(struct Server *server) {
   char buffer[30000];
 
@@ -34,10 +51,36 @@ void launch(struct Server *server) {
       "<html><body><h1>Hello</h1></body></html>";
     */
     
+    // parse request - extract request line
     char *request_line = strtok(buffer, "\r\n");
+    if (!request_line) { 
+      close(new_socket); 
+      continue; 
+    }
+  
+    // parse request line - extract method, path, and version from request line
     char *method = strtok(request_line, " ");
     char *path = strtok(NULL, " ");
     char *version = strtok(NULL, " ");
+
+    if (!method || !path || !version) { 
+      close(new_socket); 
+      continue; 
+    }
+
+    // only support GET requests for now
+    if (strcmp(method, "GET") != 0) {
+      char *response =
+        "HTTP/1.1 405 Method Not Allowed\r\n"
+        "Content-Length: 0\r\n"
+        "Connection: close\r\n"
+        "\r\n";
+      write(new_socket, response, strlen(response));
+      close(new_socket);
+      continue;
+    }
+
+    
 
     // routing logic
     char *body;
