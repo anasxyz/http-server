@@ -1,14 +1,16 @@
 #include "server.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <stdlib.h>
 
 const char *get_mime_type(const char *path) {
   const char *extension = strrchr(path, '.');
 
-  if (extension == NULL) { return "application/octet-stream"; }
+  if (extension == NULL) {
+    return "application/octet-stream";
+  }
 
   if (strcmp(extension, ".html") == 0 || strcmp(extension, ".htm") == 0) { return "text/html"; }
   if (strcmp(extension, ".css") == 0) { return "text/css"; }
@@ -22,6 +24,93 @@ const char *get_mime_type(const char *path) {
   return "application/octet-stream"; // default MIME type for unknown extensions
 }
 
+// sends HTTP response
+void send_response(int socket, const char *status, const char *content_type, const char *body) {
+  char header[512];
+  snprintf(header, sizeof(header),
+           "HTTP/1.1 %s\r\n"
+           "Content-Type: %s\r\n"
+           "Content-Length: %lu\r\n"
+           "Connection: close\r\n"
+           "\r\n",
+           status, content_type, strlen(body));
+
+  write(socket, header, strlen(header));
+  write(socket, body, strlen(body));
+}
+
+// reads and serves requested file
+void serve_file(int socket, const char *path) {
+  FILE *file = fopen(path, "rb");
+  if (!file) {
+    // 404 not found
+    char *not_found_body = "<html><body><h1>404 Not Found</h1></body></html>";
+    // not using get_mime_type() here just because we don't know the file extension
+    send_response(socket, "404 not found", "text/html", not_found_body); 
+    return;
+  }
+
+  // get file size
+  fseek(file, 0, SEEK_END);
+  long file_size = ftell(file);
+  fseek(file, 0, SEEK_SET);
+
+  // read file into buffer
+  char *file_buffer = malloc(file_size);
+  if (!file_buffer) {
+    fclose(file);
+    return;
+  }
+
+  fread(file_buffer, 1, file_size, file);
+  fclose(file);
+
+  // build response header
+  const char *mime_type = get_mime_type(path);
+  send_response(socket, "200 OK", mime_type, file_buffer);
+
+  // free memory
+  free(file_buffer);
+}
+
+// handles HTTP request
+void handle_request(int socket, char *request) {
+  // parse request - extract request line
+  char *request_line = strtok(request, "\r\n");
+  if (!request_line) { return; }
+
+  // parse request line - extract method, path, and version from request line
+  char *method = strtok(request_line, " ");
+  char *path = strtok(NULL, " ");
+  char *version = strtok(NULL, " ");
+
+  if (!method || !path || !version) { return; }
+
+  // only support GET requests for now
+  if (strcmp(method, "GET") != 0) {
+    const char *message = "Method not allowed";
+    send_response(socket, "405 Method Not Allowed", "text/plain", message);
+    return;
+  }
+
+  // map URL path to file system path
+  char filepath[512];
+
+  if (strstr(path, "..")) {
+    const char *message = "Bad request";
+    send_response(socket, "400 Bad Request", "text/plain", message);
+    return;
+  }
+
+  if (strcmp(path, "/") == 0) {
+    snprintf(filepath, sizeof(filepath), "www/index.html");
+  } else {
+    snprintf(filepath, sizeof(filepath), "www/%s", path);
+  }
+
+  serve_file(socket, filepath);
+}
+
 void launch(struct Server *server) {
   char buffer[30000];
 
@@ -30,128 +119,20 @@ void launch(struct Server *server) {
   // infinite loop accepting connections
   while (1) {
     int address_length = sizeof(server->address);
-    int new_socket = accept(server->socket, (struct sockaddr *)&server->address, (socklen_t *)&address_length);
+    int new_socket = accept(server->socket, (struct sockaddr *)&server->address,
+                            (socklen_t *)&address_length);
 
     if (new_socket < 0) {
       perror("Failed to accept connection...\n");
-      exit(1);
+      continue; 
     }
 
     memset(buffer, 0, sizeof(buffer));
-    read(new_socket, buffer, 30000);
+    read(new_socket, buffer, sizeof(buffer) - 1);
 
     printf("Received request: %s\n", buffer);
-
-    /* char *response =
-      "HTTP/1.1 200 OK\r\n"
-      "Content-Type: text/html\r\n"
-      "Content-Length: 51\r\n"
-      "Connection: close\r\n"
-      "\r\n"
-      "<html><body><h1>Hello</h1></body></html>";
-    */
     
-    // parse request - extract request line
-    char *request_line = strtok(buffer, "\r\n");
-    if (!request_line) { 
-      close(new_socket); 
-      continue; 
-    }
-  
-    // parse request line - extract method, path, and version from request line
-    char *method = strtok(request_line, " ");
-    char *path = strtok(NULL, " ");
-    char *version = strtok(NULL, " ");
-
-    if (!method || !path || !version) { 
-      close(new_socket); 
-      continue; 
-    }
-
-    // only support GET requests for now
-    if (strcmp(method, "GET") != 0) {
-      char *response =
-        "HTTP/1.1 405 Method Not Allowed\r\n"
-        "Content-Length: 0\r\n"
-        "Connection: close\r\n"
-        "\r\n";
-      write(new_socket, response, strlen(response));
-      close(new_socket);
-      continue;
-    }
-
-    // map URL path to file system path
-    char filepath[512];
-    if (strcmp(path, "/") == 0) {
-      snprintf(filepath, sizeof(filepath), "www/index.html");
-    } else {
-      // prevent directory traversal attacks by not allowing ".."
-      if (strstr(path, "..")) {
-        char *response =
-          "HTTP/1.1 400 Bad Request\r\n"
-          "Content-Length: 0\r\n"
-          "Connection: close\r\n"
-          "\r\n";
-        write(new_socket, response, strlen(response));
-        close(new_socket);
-        continue;
-      }
-
-      snprintf(filepath, sizeof(filepath), "www/%s", path);
-    }
-
-    // open file
-    FILE *file = fopen(filepath, "rb");
-    if (!file) {
-      // 404 not found
-      char *not_found_body = "<html><body><h1>404 Not Found</h1></body></html>";
-      char header[512];
-      snprintf(header, sizeof(header),
-               "HTTP/1.1 404 Not Found\r\n"
-               "Content-Type: text/html\r\n"
-               "Content-Length: %lu\r\n"
-               "Connection: close\r\n"
-               "\r\n",
-               strlen(not_found_body));
-
-      write(new_socket, header, strlen(header));
-      write(new_socket, not_found_body, strlen(not_found_body));
-      close(new_socket);
-      continue;
-    }
-
-    // get file size
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    // read file into buffer
-    char *file_buffer = malloc(file_size);
-    if (!file_buffer) {
-      fclose(file);
-      close(new_socket);
-      continue;
-    }
-    fread(file_buffer, 1, file_size, file);
-    fclose(file);
-
-    // build response header
-    const char *mime_type = get_mime_type(filepath);
-    char header[512];
-    snprintf(header, sizeof(header),
-             "HTTP/1.1 200 OK\r\n"
-             "Content-Type: %s\r\n"
-             "Content-Length: %lu\r\n"
-             "Connection: close\r\n"
-             "\r\n",
-             mime_type, file_size);
-
-    // send header + file content
-    write(new_socket, header, strlen(header));
-    write(new_socket, file_buffer, file_size);
-
-    // free memory
-    free(file_buffer);
+    handle_request(new_socket, buffer);
     close(new_socket);
   }
 }
