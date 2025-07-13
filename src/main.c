@@ -4,8 +4,8 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#include "server.h"
-#include "client.h"
+#include "../include/server.h"
+#include "../include/client.h"
 
 void launch(struct Server *server) {
   printf("===== WAITING FOR CONNECTION =====\n");

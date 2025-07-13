@@ -5,7 +5,7 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#include "http.h"
+#include "../include/http.h"
 
 char *get_mime_type(const char *path) {
   const char *extension = strrchr(path, '.');

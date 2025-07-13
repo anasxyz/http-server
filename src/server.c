@@ -1,6 +1,7 @@
-#include "server.h"
 #include <stdio.h>
 #include <stdlib.h>
+
+#include "../include/server.h"
 
 struct Server server_constructor(
     int domain,       // address domain, AF_INET for ipv4

@@ -1,7 +1,7 @@
 #ifndef http_h
 #define http_h
 
-#include "server.h"
+#include <netinet/in.h>
 
 typedef struct {
   char *key;

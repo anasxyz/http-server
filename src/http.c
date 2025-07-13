@@ -3,8 +3,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "http.h"
-#include "file_handler.h"
+#include "../include/http.h"
+#include "../include/file_handler.h"
 
 // sends HTTP response
 void send_response(int socket, HttpResponse *response) {

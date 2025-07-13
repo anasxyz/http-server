@@ -3,7 +3,7 @@ CFLAGS = -Wall -Wextra
 TARGET = server
 
 # Automatically find all .c files in the current directory
-SRC = $(wildcard *.c)
+SRC = $(wildcard src/*.c)
 
 all: $(TARGET)
 
