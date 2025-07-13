@@ -9,14 +9,14 @@
 void *handle_client(void *arg) {
   struct Client *client = (struct Client *)arg;
 
-  char buffer[30000];
-  memset(buffer, 0, sizeof(buffer));
+  char request_buffer[30000];
+  memset(request_buffer, 0, sizeof(request_buffer));
 
-  read(client->socket, buffer, sizeof(buffer) - 1);
+  read(client->socket, request_buffer, sizeof(request_buffer) - 1);
 
-  printf("Received request: %s\n", buffer);
+  printf("Received request: %s\n", request_buffer);
 
-  handle_request(client->socket, buffer);
+  handle_request(client->socket, request_buffer);
   close(client->socket);
 
   free(client);
