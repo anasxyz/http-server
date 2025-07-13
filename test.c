@@ -33,6 +33,15 @@ void launch(struct Server *server) {
       "\r\n"
       "<html><body><h1>Hello</h1></body></html>";
 
+    char *request_line = strtok(buffer, "\r\n");
+    char *method = strtok(request_line, " ");
+    char *path = strtok(NULL, " ");
+    char *version = strtok(NULL, " ");
+
+    printf("Method: %s\n", method);
+    printf("Path: %s\n", path);
+    printf("Version: %s\n", version);
+
     write(new_socket, response, strlen(response));
     close(new_socket);
   }
