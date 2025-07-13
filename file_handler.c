@@ -7,7 +7,7 @@
 
 #include "http.h"
 
-const char *get_mime_type(const char *path) {
+char *get_mime_type(const char *path) {
   const char *extension = strrchr(path, '.');
 
   if (extension == NULL) {
@@ -33,7 +33,17 @@ void serve_file(int socket, const char *path) {
     // 404 not found
     char *not_found_body = "<html><body><h1>404 Not Found</h1></body></html>";
     // not using get_mime_type() here just because we don't know the file extension
-    send_response(socket, "404 not found", "text/html", not_found_body); 
+
+    HttpResponse response = {
+      .status = "404 Not Found",
+      .content_type = "text/html",
+      .body = not_found_body,
+      .body_length = strlen(not_found_body),
+      .headers = NULL,
+      .num_headers = 0,
+    };
+
+    send_response(socket, &response); 
     return;
   }
 
@@ -53,8 +63,18 @@ void serve_file(int socket, const char *path) {
   fclose(file);
 
   // build response header
-  const char *mime_type = get_mime_type(path);
-  send_response(socket, "200 OK", mime_type, file_buffer);
+  char *mime_type = get_mime_type(path);
+
+  HttpResponse response = {
+    .status = "200 OK",
+    .content_type = mime_type,
+    .body = file_buffer,
+    .body_length = file_size,
+    .headers = NULL,
+    .num_headers = 0,
+  };
+
+  send_response(socket, &response);
 
   // free memory
   free(file_buffer);
