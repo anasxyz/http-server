@@ -17,7 +17,13 @@ typedef struct {
   size_t num_headers;
 } HttpResponse;
 
+typedef struct {
+  char *method;
+  char *path;
+  char *version;
+} HttpRequest;
+
 void send_response(int socket, HttpResponse *response);
-void handle_request(int socket, char *request);
+void handle_request(int socket, char *request_buffer);
 
 #endif /* http_h */
