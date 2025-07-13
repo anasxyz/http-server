@@ -4,6 +4,11 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <pthread.h>
+
+struct Client {
+  int socket;
+};
 
 const char *get_mime_type(const char *path) {
   const char *extension = strrchr(path, '.');
@@ -111,9 +116,24 @@ void handle_request(int socket, char *request) {
   serve_file(socket, filepath);
 }
 
-void launch(struct Server *server) {
-  char buffer[30000];
+void *handle_client(void *arg) {
+  struct Client *client = (struct Client *)arg;
 
+  char buffer[30000];
+  memset(buffer, 0, sizeof(buffer));
+
+  read(client->socket, buffer, sizeof(buffer) - 1);
+
+  printf("Received request: %s\n", buffer);
+
+  handle_request(client->socket, buffer);
+  close(client->socket);
+
+  free(client);
+  return NULL;
+}
+
+void launch(struct Server *server) {
   printf("===== WAITING FOR CONNECTION =====\n");
 
   // infinite loop accepting connections
@@ -127,13 +147,17 @@ void launch(struct Server *server) {
       continue; 
     }
 
-    memset(buffer, 0, sizeof(buffer));
-    read(new_socket, buffer, sizeof(buffer) - 1);
+    struct Client *client = malloc(sizeof(struct Client));
+    if (!client) {
+      perror("Failed to allocate memory for client...\n");
+      close(new_socket);
+      continue;
+    }
+    client->socket = new_socket;
 
-    printf("Received request: %s\n", buffer);
-    
-    handle_request(new_socket, buffer);
-    close(new_socket);
+    pthread_t tid;
+    pthread_create(&tid, NULL, handle_client, client);
+    pthread_detach(tid);
   }
 }
 
