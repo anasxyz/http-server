@@ -111,7 +111,7 @@ void handle_request(int socket, char *request_buffer) {
     char *message = "Not Found";
 
     HttpResponse response = {
-        .status = "404 Not Foundddddd",
+        .status = "404 Not Found",
         .content_type = "text/plain",
         .body = message,
         .body_length = strlen(message),
