@@ -89,25 +89,9 @@ void handle_request(int socket, char *request_buffer) {
     return;
   }
 
-  char full_path[1024];
-  const char *clean_request_path = clean_path(request.path);
+  const char* final_path = get_final_path(request.path);
 
-  if (strcmp(clean_request_path, "/") == 0) {
-    snprintf(full_path, sizeof(full_path), "www/index.html");
-  } else {
-    snprintf(full_path, sizeof(full_path), "www/%s", clean_request_path);
-  }
-
-  const char* final_path = clean_path(full_path);
-
-  char* fake_path = "..//../Desktop/test.html";
-  printf("------------ IS THE PATH CLEAN? ----------\n");
-  printf("Request Path: %s\n", request.path);
-  printf("Cleaned Request Path: %s\n", clean_request_path);
-  printf("Full Path: %s\n", full_path);
-  printf("Cleaned Full Path (final path): %s\n", final_path);
-
-  if (does_path_exist(full_path) == false) {
+  if (does_path_exist(final_path) == false) {
     char *message = "Not Found";
 
     HttpResponse response = {
@@ -125,3 +109,4 @@ void handle_request(int socket, char *request_buffer) {
 
   serve_file(socket, final_path);
 }
+
