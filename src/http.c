@@ -7,6 +7,7 @@
 
 #include "../include/file_handler.h"
 #include "../include/http.h"
+#include "../include/utils_path.h"
 
 // sends HTTP response
 void send_response(int socket, HttpResponse *response) {
