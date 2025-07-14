@@ -185,7 +185,6 @@ void serve_not_found(int socket) {
     send_response(socket, &response);
     return;
   }
-
   fseek(file, 0, SEEK_END);
   long file_size = ftell(file);
   fseek(file, 0, SEEK_SET);
