@@ -22,6 +22,12 @@ void send_response(int socket, HttpResponse *response) {
 
   write(socket, header, strlen(header));
   write(socket, response->body, response->body_length);
+
+  printf("Sent response: %s\n", response->status);
+  printf("Content-Type: %s\n", response->content_type);
+  printf("Content-Length: %lu\n", response->body_length);
+  printf("Connection: close\n");
+  printf("\n");
 }
 
 HttpRequest parse_request(char *request_buffer) {
@@ -82,11 +88,26 @@ void handle_request(int socket, char *request_buffer) {
     return;
   }
 
-  // get a safe and clean path
-  char *clean_file_path = clean_path(request.path);
+  char full_path[1024];
+  const char *cleaned_request_path = clean_path(request.path);
 
-  if (!clean_file_path) {
-    char *message = "Not found";
+  if (strcmp(request.path, "/") == 0) {
+    snprintf(full_path, sizeof(full_path), "www/index.html");
+  } else {
+    snprintf(full_path, sizeof(full_path), "www/%s", cleaned_request_path);
+  }
+  
+  const char* cleaned_path = clean_path(full_path);
+
+  char* fake_path = "..//../Desktop/test.html";
+  printf("------------ IS THE PATH CLEAN? ----------\n");
+  printf("Request Path: %s\n", request.path);
+  printf("Cleaned Request Path: %s\n", clean_path_2(request.path));
+  printf("Full Path: %s\n", full_path);
+  printf("Cleaned Full Path: %s\n", clean_path_2(full_path));
+
+  if (cleaned_path == NULL) {
+    char *message = "Not Found";
 
     HttpResponse response = {
         .status = "404 Not Found",
@@ -99,10 +120,18 @@ void handle_request(int socket, char *request_buffer) {
 
     send_response(socket, &response);
     return;
-
-    serve_file(socket, clean_file_path);
-
-    // can't forget to free memory because clean_path() allocates memory
-    free(clean_file_path);
   }
+
+
+  // map URL path to file system path
+  serve_file(socket, cleaned_path);
 }
+
+const char* clean_path(const char *request_path) {
+  if (!request_path) { return NULL; }
+
+  const char* cleaned_path = realpath(request_path, NULL);
+
+  return cleaned_path;
+}
+

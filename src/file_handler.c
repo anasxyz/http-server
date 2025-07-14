@@ -27,6 +27,7 @@ char *get_mime_type(const char *path) {
   return "application/octet-stream"; // default MIME type for unknown extensions
 } 
 
+/*
 char* clean_path(const char *request_path) {
   if (!request_path) { return NULL; }
 
@@ -55,10 +56,13 @@ char* clean_path(const char *request_path) {
     return NULL;
   }
 
+  printf("Cleaned path: %s\n", cleaned_path);
+
   // finally this is the real safe path
   // this memory must be freed by the caller of this function
   return cleaned_path; 
 }
+*/
 
 // reads and serves requested file
 void serve_file(int socket, const char *path) {
