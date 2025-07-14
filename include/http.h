@@ -25,5 +25,6 @@ typedef struct {
 
 void send_response(int socket, HttpResponse *response);
 void handle_request(int socket, char *request_buffer);
+HttpRequest parse_request(char *request_buffer);
 
 #endif /* http_h */
