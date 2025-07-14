@@ -1,5 +1,6 @@
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -91,21 +92,9 @@ void handle_request(int socket, char *request_buffer) {
   const char* final_path = get_final_path(request.path);
 
   if (does_path_exist(final_path) == false) {
-    char *message = "Not Found";
-
-    HttpResponse response = {
-        .status = "404 Not Found",
-        .content_type = "text/plain",
-        .body = message,
-        .body_length = strlen(message),
-        .headers = NULL,
-        .num_headers = 0,
-    };
-
-    send_response(socket, &response);
+    serve_not_found(socket);
     return;
   }
 
   serve_file(socket, final_path);
 }
-

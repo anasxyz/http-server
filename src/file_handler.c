@@ -166,24 +166,60 @@ const char* get_final_path(const char *request_path) {
   return final_path;
 }
 
-// reads and serves requested file
-void serve_file(int socket, const char *path) {
-  FILE *file = fopen(path, "rb");
+// serves 404 not found page
+void serve_not_found(int socket) {
+  FILE *file = fopen("www/404.html", "rb");
   if (!file) {
-    // 404 not found
-    char *not_found_body = "<html><body><h1>404 Not Found</h1></body></html>";
-    // not using get_mime_type() here just because we don't know the file extension
+    perror("Failed to open 404.html...\n");
 
+    const char* fallback_body = "<html><body><h1>404 Not Found</h1></body></html>";
     HttpResponse response = {
       .status = "404 Not Found",
       .content_type = "text/html",
-      .body = not_found_body,
-      .body_length = strlen(not_found_body),
+      .body = (char *)fallback_body,  // no need to free this because it's a static string
+      .body_length = strlen(fallback_body),
       .headers = NULL,
       .num_headers = 0,
     };
 
-    send_response(socket, &response); 
+    send_response(socket, &response);
+    return;
+  }
+
+  fseek(file, 0, SEEK_END);
+  long file_size = ftell(file);
+  fseek(file, 0, SEEK_SET);
+
+  char *file_buffer = malloc(file_size);
+  if (!file_buffer) {
+    fclose(file);
+    return;
+  }
+
+  fread(file_buffer, 1, file_size, file);
+  fclose(file);
+
+  HttpResponse response = {
+    .status = "404 Not Found",
+    .content_type = "text/html",
+    .body = file_buffer,
+    .body_length = file_size,
+    .headers = NULL,
+    .num_headers = 0,
+  };
+
+  send_response(socket, &response);
+
+  free(file_buffer);
+}
+
+// reads and serves requested file
+void serve_file(int socket, const char *path) {
+  FILE *file = fopen(path, "rb");
+  if (!file) {
+    perror("Failed to open file...\n");
+
+    serve_not_found(socket);
     return;
   }
 
@@ -219,5 +255,4 @@ void serve_file(int socket, const char *path) {
   // free memory
   free(file_buffer);
 }
-
 
