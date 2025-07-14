@@ -142,15 +142,15 @@ const char* get_final_path(const char *request_path) {
 
   // if root path
   if (strcmp(clean_request_path, "/") == 0) {
-    snprintf(full_path, sizeof(full_path), "www/index.html");
+    snprintf(full_path, sizeof(full_path), "%s/index.html", WEB_ROOT);
   } 
   // if ends with '/' assume directory and append index.html
   else if (clean_request_path[strlen(clean_request_path) - 1] == '/') {
-    snprintf(full_path, sizeof(full_path), "www%sindex.html", clean_request_path);
+    snprintf(full_path, sizeof(full_path), "%s%sindex.html", WEB_ROOT, clean_request_path);
   } 
   // else, it's a direct file
   else {
-    snprintf(full_path, sizeof(full_path), "www%s", clean_request_path);
+    snprintf(full_path, sizeof(full_path), "%s%s", WEB_ROOT, clean_request_path);
   }
 
   const char* final_path = clean_path(full_path);
