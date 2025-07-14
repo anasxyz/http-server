@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,28 +90,28 @@ void handle_request(int socket, char *request_buffer) {
   }
 
   char full_path[1024];
-  const char *cleaned_request_path = clean_path(request.path);
+  const char *clean_request_path = clean_path(request.path);
 
-  if (strcmp(request.path, "/") == 0) {
+  if (strcmp(clean_request_path, "/") == 0) {
     snprintf(full_path, sizeof(full_path), "www/index.html");
   } else {
-    snprintf(full_path, sizeof(full_path), "www/%s", cleaned_request_path);
+    snprintf(full_path, sizeof(full_path), "www/%s", clean_request_path);
   }
-  
-  const char* cleaned_path = clean_path(full_path);
+
+  const char* final_path = clean_path(full_path);
 
   char* fake_path = "..//../Desktop/test.html";
   printf("------------ IS THE PATH CLEAN? ----------\n");
   printf("Request Path: %s\n", request.path);
-  printf("Cleaned Request Path: %s\n", clean_path_2(request.path));
+  printf("Cleaned Request Path: %s\n", clean_request_path);
   printf("Full Path: %s\n", full_path);
-  printf("Cleaned Full Path: %s\n", clean_path_2(full_path));
+  printf("Cleaned Full Path (final path): %s\n", final_path);
 
-  if (cleaned_path == NULL) {
+  if (does_path_exist(full_path) == false) {
     char *message = "Not Found";
 
     HttpResponse response = {
-        .status = "404 Not Found",
+        .status = "404 Not Foundddddd",
         .content_type = "text/plain",
         .body = message,
         .body_length = strlen(message),
@@ -122,16 +123,5 @@ void handle_request(int socket, char *request_buffer) {
     return;
   }
 
-
-  // map URL path to file system path
-  serve_file(socket, cleaned_path);
+  serve_file(socket, final_path);
 }
-
-const char* clean_path(const char *request_path) {
-  if (!request_path) { return NULL; }
-
-  const char* cleaned_path = realpath(request_path, NULL);
-
-  return cleaned_path;
-}
-
