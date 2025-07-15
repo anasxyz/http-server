@@ -61,14 +61,14 @@ HttpResponse* create_response(int status_code, const char* path) {
     return NULL;
   }
 
+  if (status_code == 404) { path = get_final_path("/404.html"); }
+
   const char *reason = get_status_reason(status_code);
   int status_len = snprintf(NULL, 0, "HTTP/1.1 %d %s", status_code, reason);
   response->status = malloc(status_len + 1);
   snprintf(response->status, status_len + 1, "HTTP/1.1 %d %s", status_code, reason);
 
   char* content_type = strdup(get_mime_type(path));  // strdup ensures ownership
-
-  if (status_code == 404) { path = get_final_path("/404.html"); }
 
   FILE *file = get_file(path);
   if (!file) {
@@ -114,7 +114,6 @@ void send_response(int socket, HttpResponse *response) {
            "Content-Length: %lu\r\n"
            "Content-Type: %s\r\n"
            "Connection: %s\r\n"
-           "%s"
            "\r\n",
            response->status, 
            response->date, 
@@ -122,8 +121,7 @@ void send_response(int socket, HttpResponse *response) {
            response->last_modified, 
            response->body_length,
            response->content_type,
-           response->connection,
-           response->body);
+           response->connection);
 
   // TODO: explore possibility of extra headers in the future
 
@@ -204,21 +202,10 @@ void handle_request(int socket, char *request_buffer) {
   // Try to serve the requested file if it exists
   if (does_path_exist(final_path)) {
     response = create_response(200, final_path);
-  }
-
-  // If the requested file doesn’t exist OR response creation failed, serve 404
-  if (!response) {
-    const char *fallback_path = get_final_path("/404.html");
-    response = create_response(404, fallback_path);
-  }
-
-  // Final fail-safe: give up if even 404 response can't be built
-  if (!response) {
-    fprintf(stderr, "Critical: unable to create response for path: %s\n", final_path);
-    close(socket);  // prevent resource leak
-    return;
+  } else {
+    response = create_response(404, final_path);
   }
 
   send_response(socket, response);
-  free(response);  // you MUST free heap memory inside your response
+  free(response); 
 }
