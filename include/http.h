@@ -3,6 +3,7 @@
 
 #include <netinet/in.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 typedef struct {
   const char* method;
