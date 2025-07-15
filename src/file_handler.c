@@ -26,7 +26,7 @@ void serve_not_found(int socket) {
       .num_headers = 0,
     };
 
-    send_response(socket, &response);
+    send_response(socket, 404, fallback_body);
     return;
   }
 
@@ -52,7 +52,7 @@ void serve_not_found(int socket) {
     .num_headers = 0,
   };
 
-  send_response(socket, &response);
+  send_response(socket, 404, file_buffer);
 
   free(file_buffer);
 }
@@ -94,7 +94,7 @@ void serve_file(int socket, const char *path) {
     .num_headers = 0,
   };
 
-  send_response(socket, &response);
+  send_response(socket, 200, file_buffer);
 
   // free memory
   free(file_buffer);

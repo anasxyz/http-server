@@ -8,16 +8,15 @@ typedef struct {
   char *value;
 } Header;
 
-
 typedef struct {
   int code;
-  const char* reason;
+  char* reason;
 } HttpStatus; 
 
 typedef struct {
-  HttpStatus status;
+  char* status;
   char *content_type;
-  char *body;
+  const char *body;
   size_t body_length;
   Header *headers;
   size_t num_headers;
@@ -37,7 +36,9 @@ typedef enum {
   HTTP_STATUS_INTERNAL_SERVER_ERROR = 500,
 } HttpStatusCode;
 
-void send_response(int socket, HttpStatusCode status_code, const char* text);
+char* get_status_reason(int code);
+
+void send_response(int socket, int status_code, const char* text);
 
 void handle_request(int socket, char *request_buffer);
 HttpRequest parse_request(char *request_buffer);
