@@ -2,6 +2,7 @@
 #define http_h
 
 #include <netinet/in.h>
+#include <stdio.h>
 
 typedef struct {
   char *key;
@@ -10,12 +11,17 @@ typedef struct {
 
 typedef struct {
   int code;
-  char* reason;
-} HttpStatus; 
+  char *reason;
+} HttpStatus;
 
 typedef struct {
-  char* status;
+  char *status;
+  // char *date;
+  // char *server;
+  // char *last_modified;
   char *content_type;
+  char *connection;
+
   const char *body;
   size_t body_length;
   Header *headers;
@@ -36,9 +42,9 @@ typedef enum {
   HTTP_STATUS_INTERNAL_SERVER_ERROR = 500,
 } HttpStatusCode;
 
-char* get_status_reason(int code);
+char *get_status_reason(int code);
 
-HttpResponse* create_response();
+HttpResponse *create_response(int status_code, const char *path);
 void send_response(int socket, HttpResponse *response);
 
 void handle_request(int socket, char *request_buffer);

@@ -6,8 +6,6 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#include "../include/http.h"
-
 #define WEB_ROOT "www"
 
 char *get_mime_type(const char *path) {

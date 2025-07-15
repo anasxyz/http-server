@@ -54,27 +54,84 @@ char* get_status_reason(int code) {
     }
 }
 
+HttpResponse* create_response(int status_code, const char* path) {
+  HttpResponse *response = malloc(sizeof(HttpResponse));
+  if (!response) {
+    perror("Failed to allocate memory for response...\n");
+    return NULL;
+  }
+
+  // get full status line
+  char status[100];
+  snprintf(status, sizeof(status), "HTTP/1.1 %i %s", status_code, get_status_reason(status_code));
+
+  // get content type
+  char* content_type = get_mime_type(path);
+
+  // read file into buffer
+  FILE *file = get_file(path);
+  if (!file) {
+    perror("Failed to open file...\n");
+    return NULL;
+  }
+  const char *file_buffer = "<html><body><h1>Test</h1></body></html>";
+
+  // free file
+  fclose(file);
+
+  // build response
+  response->status = status;
+  // response->date = "Thu, 01 Jan 1970 00:00:00 GMT"; // hardcoded for now
+  // response->server = "http-server";
+  // response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT"; // hardcoded for now
+  response->body_length = strlen(file_buffer);
+  response->content_type = "text/html";
+  response->connection = "close";
+
+  response->body = file_buffer;
+  response->headers = NULL;
+  response->num_headers = 0;
+
+  return response;
+}
+
 // sends HTTP response
 void send_response(int socket, HttpResponse *response) {
   char header[512];
   snprintf(header, sizeof(header),
-           "HTTP/1.1 %s\r\n"
-           "Content-Type: %s\r\n"
+           "%s\r\n"
+           // "Date: %s\r\n"
+           // "Server: %s\r\n"
+           // "Last-Modified: %s\r\n"
            "Content-Length: %lu\r\n"
-           "Connection: close\r\n"
+           "Content-Type: %s\r\n"
+           "Connection: %s\r\n"
+           "%s"
            "\r\n",
-           response->status, response->content_type, response->body_length);
+           response->status, 
+           // response->date, 
+           // response->server, 
+           // response->last_modified, 
+           response->body_length,
+           response->content_type,
+           response->connection,
+           response->body);
 
   // TODO: explore possibility of extra headers in the future
 
   write(socket, header, strlen(header));
   write(socket, response->body, response->body_length);
 
-  printf("Sent response: %s\n", response->status);
+  printf("Sent response: \n");
+  printf("Status: %s\n", response->status);
+  // printf("Date: %s\n", response->date);
+  // printf("Server: %s\n", response->server);
+  // printf("Last-Modified: %s\n", response->last_modified);
   printf("Content-Type: %s\n", response->content_type);
   printf("Content-Length: %lu\n", response->body_length);
-  printf("Connection: close\n");
-  printf("\n");
+  printf("Connection: %s\n", response->connection);
+
+  free(response);
 }
 
 HttpRequest parse_request(char *request_buffer) {
@@ -138,9 +195,14 @@ void handle_request(int socket, char *request_buffer) {
   const char* final_path = get_final_path(request.path);
 
   if (does_path_exist(final_path) == false) {
-    serve_not_found(socket);
+    perror("file does not exist...\n");
     return;
   }
 
-  serve_file(socket, final_path);
+  HttpResponse *response = create_response(200, final_path);
+  if (!response) {
+    return;
+  }
+
+  send_response(socket, response);
 }

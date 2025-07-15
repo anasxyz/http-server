@@ -1,7 +1,9 @@
 #ifndef file_handler_h
 #define file_handler_h
 
-void serve_file(int socket, const char *path);
-void serve_not_found(int socket);
+#include <stdio.h>
+
+FILE* get_file(const char *path);
+const char* read_file(FILE *file);
 
 #endif /* file_handler_h */
