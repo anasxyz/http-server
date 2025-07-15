@@ -5,6 +5,25 @@
 #include <stdio.h>
 
 typedef struct {
+  const char* method;
+  bool allowed;
+} HttpMethod;
+
+static const HttpMethod allowed_methods[] = {
+  {"GET", true},
+  {"POST", false},
+  {"PUT", false},
+  {"DELETE", false},
+  {"PATCH", false},
+  {"HEAD", false},
+  {"OPTIONS", false},
+  {"CONNECT", false},
+  {"TRACE", false},
+};
+
+#define NUM_ALLOWED_METHODS (sizeof(allowed_methods) / sizeof(allowed_methods[0]))
+
+typedef struct {
   char *key;
   char *value;
 } Header;

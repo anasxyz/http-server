@@ -164,6 +164,15 @@ HttpRequest parse_request(char *request_buffer) {
   return request;
 }
 
+bool is_method_allowed(const char* method) {
+  for (size_t i = 0; i < NUM_ALLOWED_METHODS; ++i) {
+    if (strcmp(method, allowed_methods[i].method) == 0 && allowed_methods[i].allowed) {
+      return allowed_methods[i].allowed;
+    }
+  }
+  return false;
+}
+
 // handles HTTP request
 void handle_request(int socket, char *request_buffer) {
   HttpResponse *response = NULL;
@@ -177,7 +186,7 @@ void handle_request(int socket, char *request_buffer) {
   const char *final_path = resolve_path(request.path);
 
   // only support GET requests for now
-  if (strcmp(request.method, "GET") != 0) {
+  if (!is_method_allowed(request.method)) {
     response = create_response(405, NULL);
   } else if (does_path_exist(final_path)) {
     response = create_response(200, final_path);
