@@ -31,7 +31,6 @@ const char* read_file(FILE *file) {
   }
 
   fread(file_buffer, 1, file_size, file);
-  fclose(file);
 
   return file_buffer;
 }

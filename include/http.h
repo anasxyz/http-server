@@ -16,9 +16,9 @@ typedef struct {
 
 typedef struct {
   char *status;
-  // char *date;
-  // char *server;
-  // char *last_modified;
+  char *date;
+  char *server;
+  char *last_modified;
   char *content_type;
   char *connection;
 

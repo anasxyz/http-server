@@ -74,18 +74,18 @@ HttpResponse* create_response(int status_code, const char* path) {
     perror("Failed to open file...\n");
     return NULL;
   }
-  const char *file_buffer = "<html><body><h1>Test</h1></body></html>";
+  const char *file_buffer = read_file(file);
 
   // free file
   fclose(file);
 
   // build response
   response->status = status;
-  // response->date = "Thu, 01 Jan 1970 00:00:00 GMT"; // hardcoded for now
-  // response->server = "http-server";
-  // response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT"; // hardcoded for now
+  response->date = "Thu, 01 Jan 1970 00:00:00 GMT"; // hardcoded for now
+  response->server = "http-server";
+  response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT"; // hardcoded for now
   response->body_length = strlen(file_buffer);
-  response->content_type = "text/html";
+  response->content_type = get_mime_type(path);
   response->connection = "close";
 
   response->body = file_buffer;
@@ -100,18 +100,18 @@ void send_response(int socket, HttpResponse *response) {
   char header[512];
   snprintf(header, sizeof(header),
            "%s\r\n"
-           // "Date: %s\r\n"
-           // "Server: %s\r\n"
-           // "Last-Modified: %s\r\n"
+           "Date: %s\r\n"
+           "Server: %s\r\n"
+           "Last-Modified: %s\r\n"
            "Content-Length: %lu\r\n"
            "Content-Type: %s\r\n"
            "Connection: %s\r\n"
            "%s"
            "\r\n",
            response->status, 
-           // response->date, 
-           // response->server, 
-           // response->last_modified, 
+           response->date, 
+           response->server, 
+           response->last_modified, 
            response->body_length,
            response->content_type,
            response->connection,
