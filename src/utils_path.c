@@ -115,13 +115,45 @@ const char* get_final_path(const char *request_path) {
 
   const char* final_path = clean_path(full_path);
 
-  // for testing
-  char* fake_path = "../../Desktop/test.html";
-  printf("------------ IS THE PATH CLEAN? ----------\n");
-  printf("Request Path: %s\n", request_path);
-  printf("Cleaned Request Path: %s\n", clean_request_path);
-  printf("Full Path: %s\n", full_path);
-  printf("Cleaned Full Path (final path): %s\n", final_path);
-
   return final_path;
+}
+
+const char* resolve_path(const char* request_path) {
+    static char resolved_path[1024];
+    printf("\n--- Resolving Request Path: %s ---\n", request_path);
+
+    // try direct path
+    const char* candidate_path = get_final_path(request_path);
+    printf("[TRY 1] Direct: %s\n", candidate_path);
+    if (does_path_exist(candidate_path)) {
+        printf("✔️  Found at direct path.\n");
+        strncpy(resolved_path, candidate_path, sizeof(resolved_path));
+        return resolved_path;
+    }
+
+    // try appending ".html"
+    char html_request_path[1024];
+    snprintf(html_request_path, sizeof(html_request_path), "%s.html", request_path);
+    candidate_path = get_final_path(html_request_path);
+    printf("[TRY 2] With .html: %s\n", candidate_path);
+    if (does_path_exist(candidate_path)) {
+        printf("✔️  Found with .html extension.\n");
+        strncpy(resolved_path, candidate_path, sizeof(resolved_path));
+        return resolved_path;
+    }
+
+    // try appending "/index.html"
+    char index_request_path[1024];
+    snprintf(index_request_path, sizeof(index_request_path), "%s/index.html", request_path);
+    candidate_path = get_final_path(index_request_path);
+    printf("[TRY 3] As directory with index.html: %s\n", candidate_path);
+    if (does_path_exist(candidate_path)) {
+        printf("✔️  Found as directory with index.html.\n");
+        strncpy(resolved_path, candidate_path, sizeof(resolved_path));
+        return resolved_path;
+    }
+
+    // fallback to original
+    printf("❌  None found. Fallback to original cleaned path.\n");
+    return get_final_path(request_path);
 }
