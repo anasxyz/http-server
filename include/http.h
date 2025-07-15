@@ -38,7 +38,8 @@ typedef enum {
 
 char* get_status_reason(int code);
 
-void send_response(int socket, int status_code, const char* text);
+HttpResponse* create_response();
+void send_response(int socket, HttpResponse *response);
 
 void handle_request(int socket, char *request_buffer);
 HttpRequest parse_request(char *request_buffer);

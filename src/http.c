@@ -55,20 +55,7 @@ char* get_status_reason(int code) {
 }
 
 // sends HTTP response
-void send_response(int socket, int status_code, const char* text) {
-  char status[100];
-  snprintf(status, sizeof(status), "%i %s", status_code, get_status_reason(status_code));
-
-  HttpResponse response = {
-    .status = status,
-     // for now because i dont know how to use get_mime_type() function in here since we're only getting text
-    .content_type = "text/html",  
-    .body_length = strlen(text),
-    .body = text,
-    .headers = NULL,
-    .num_headers = 0,
-  };
-
+void send_response(int socket, HttpResponse *response) {
   char header[512];
   snprintf(header, sizeof(header),
            "HTTP/1.1 %s\r\n"
@@ -76,16 +63,16 @@ void send_response(int socket, int status_code, const char* text) {
            "Content-Length: %lu\r\n"
            "Connection: close\r\n"
            "\r\n",
-           response.status, response.content_type, response.body_length);
+           response->status, response->content_type, response->body_length);
 
   // TODO: explore possibility of extra headers in the future
 
   write(socket, header, strlen(header));
-  write(socket, response.body, response.body_length);
+  write(socket, response->body, response->body_length);
 
-  printf("Sent response: %s\n", response.status);
-  printf("Content-Type: %s\n", response.content_type);
-  printf("Content-Length: %lu\n", response.body_length);
+  printf("Sent response: %s\n", response->status);
+  printf("Content-Type: %s\n", response->content_type);
+  printf("Content-Length: %lu\n", response->body_length);
   printf("Connection: close\n");
   printf("\n");
 }
@@ -127,7 +114,7 @@ void handle_request(int socket, char *request_buffer) {
         .num_headers = 0,
     };
 
-    send_response(socket, 400, message);
+    send_response(socket, &response);
   }
 
   // only support GET requests for now
@@ -143,7 +130,7 @@ void handle_request(int socket, char *request_buffer) {
         .num_headers = 0,
     };
 
-    send_response(socket, 405, message);
+    send_response(socket, &response);
 
     return;
   }
