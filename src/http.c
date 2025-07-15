@@ -55,57 +55,52 @@ char* get_status_reason(int code) {
 }
 
 HttpResponse* create_response(int status_code, const char* path) {
-    HttpResponse *response = malloc(sizeof(HttpResponse));
-    if (!response) {
-        perror("Failed to allocate memory for response...\n");
-        return NULL;
-    }
+  HttpResponse *response = malloc(sizeof(HttpResponse));
+  if (!response) {
+    perror("Failed to allocate memory for response...\n");
+    return NULL;
+  }
 
-    const char *reason = get_status_reason(status_code);
-    int status_len = snprintf(NULL, 0, "HTTP/1.1 %d %s", status_code, reason);
-    char *status = malloc(status_len + 1);
-    if (!status) {
-        free(response);
-        perror("Failed to allocate memory for status line");
-        return NULL;
-    }
-    snprintf(status, status_len + 1, "HTTP/1.1 %d %s", status_code, reason);
-    response->status = status;
+  const char *reason = get_status_reason(status_code);
+  int status_len = snprintf(NULL, 0, "HTTP/1.1 %d %s", status_code, reason);
+  response->status = malloc(status_len + 1);
+  snprintf(response->status, status_len + 1, "HTTP/1.1 %d %s", status_code, reason);
 
-    // Fallback to 404 page if file doesn't exist
-    if (status_code == 404 || !does_path_exist(path)) {
-        path = get_final_path("/404.html");
-    }
+  char* content_type = strdup(get_mime_type(path));  // strdup ensures ownership
 
-    FILE *file = get_file(path);
-    if (!file) {
-        fprintf(stderr, "Failed to open file: %s\n", path);
-        free(status);
-        free(response);
-        return NULL;
-    }
+  if (status_code == 404) { path = get_final_path("/404.html"); }
 
-    char *body = "<html><body><h1>Test</h1></body></html>";
-    fclose(file);
+  FILE *file = get_file(path);
+  if (!file) {
+    fprintf(stderr, "Failed to open file: %s\n", path);
+    free(response->status);
+    free(response->content_type);
+    free(response);
+    return NULL;
+  }
 
-    if (!body) {
-        fprintf(stderr, "Failed to read file into memory: %s\n", path);
-        free(status);
-        free(response);
-        return NULL;
-    }
+  char *body = read_file(file);
+  fclose(file);
 
-    response->body = body;
-    response->body_length = strlen(body);  // only safe because read_file null-terminates
-    response->content_type = "text/html";  // strdup ensures ownership
-    response->connection = "close";
-    response->date = "Thu, 01 Jan 1970 00:00:00 GMT";
-    response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT";
-    response->server = "http-server";
-    response->headers = NULL;
-    response->num_headers = 0;
+  if (!body) {
+    fprintf(stderr, "Failed to read file into memory: %s\n", path);
+    free(response->status);
+    free(response->content_type);
+    free(response);
+    return NULL;
+  }
 
-    return response;
+  response->body = body;
+  response->body_length = strlen(body);  // only safe because read_file null-terminates
+  response->content_type = content_type;
+  response->connection = "close";
+  response->date = "Thu, 01 Jan 1970 00:00:00 GMT";
+  response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT";
+  response->server = "http-server";
+  response->headers = NULL;
+  response->num_headers = 0;
+
+  return response;
 }
 
 // sends HTTP response
