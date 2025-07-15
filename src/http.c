@@ -1,3 +1,4 @@
+#include <linux/limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -196,10 +197,10 @@ void handle_request(int socket, char *request_buffer) {
     return;
   }
 
-  const char *final_path = get_final_path(request.path);
+  const char *final_path = resolve_path(request.path);
   HttpResponse *response = NULL;
 
-  // Try to serve the requested file if it exists
+  // try to serve the requested file if it exists
   if (does_path_exist(final_path)) {
     response = create_response(200, final_path);
   } else {
