@@ -19,7 +19,7 @@ FILE* get_file(const char *path) {
 }
 
 // reads file into buffer
-const char* read_file(FILE *file) {
+char* read_file(FILE *file) {
   fseek(file, 0, SEEK_END);
   long file_size = ftell(file);
   fseek(file, 0, SEEK_SET);

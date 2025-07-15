@@ -55,44 +55,57 @@ char* get_status_reason(int code) {
 }
 
 HttpResponse* create_response(int status_code, const char* path) {
-  HttpResponse *response = malloc(sizeof(HttpResponse));
-  if (!response) {
-    perror("Failed to allocate memory for response...\n");
-    return NULL;
-  }
+    HttpResponse *response = malloc(sizeof(HttpResponse));
+    if (!response) {
+        perror("Failed to allocate memory for response...\n");
+        return NULL;
+    }
 
-  // get full status line
-  char status[100];
-  snprintf(status, sizeof(status), "HTTP/1.1 %i %s", status_code, get_status_reason(status_code));
+    const char *reason = get_status_reason(status_code);
+    int status_len = snprintf(NULL, 0, "HTTP/1.1 %d %s", status_code, reason);
+    char *status = malloc(status_len + 1);
+    if (!status) {
+        free(response);
+        perror("Failed to allocate memory for status line");
+        return NULL;
+    }
+    snprintf(status, status_len + 1, "HTTP/1.1 %d %s", status_code, reason);
+    response->status = status;
 
-  // get content type
-  char* content_type = get_mime_type(path);
+    // Fallback to 404 page if file doesn't exist
+    if (status_code == 404 || !does_path_exist(path)) {
+        path = get_final_path("/404.html");
+    }
 
-  // read file into buffer
-  FILE *file = get_file(path);
-  if (!file) {
-    perror("Failed to open file...\n");
-    return NULL;
-  }
-  const char *file_buffer = read_file(file);
+    FILE *file = get_file(path);
+    if (!file) {
+        fprintf(stderr, "Failed to open file: %s\n", path);
+        free(status);
+        free(response);
+        return NULL;
+    }
 
-  // free file
-  fclose(file);
+    char *body = "<html><body><h1>Test</h1></body></html>";
+    fclose(file);
 
-  // build response
-  response->status = status;
-  response->date = "Thu, 01 Jan 1970 00:00:00 GMT"; // hardcoded for now
-  response->server = "http-server";
-  response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT"; // hardcoded for now
-  response->body_length = strlen(file_buffer);
-  response->content_type = get_mime_type(path);
-  response->connection = "close";
+    if (!body) {
+        fprintf(stderr, "Failed to read file into memory: %s\n", path);
+        free(status);
+        free(response);
+        return NULL;
+    }
 
-  response->body = file_buffer;
-  response->headers = NULL;
-  response->num_headers = 0;
+    response->body = body;
+    response->body_length = strlen(body);  // only safe because read_file null-terminates
+    response->content_type = "text/html";  // strdup ensures ownership
+    response->connection = "close";
+    response->date = "Thu, 01 Jan 1970 00:00:00 GMT";
+    response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT";
+    response->server = "http-server";
+    response->headers = NULL;
+    response->num_headers = 0;
 
-  return response;
+    return response;
 }
 
 // sends HTTP response
@@ -130,8 +143,6 @@ void send_response(int socket, HttpResponse *response) {
   printf("Content-Type: %s\n", response->content_type);
   printf("Content-Length: %lu\n", response->body_length);
   printf("Connection: %s\n", response->connection);
-
-  free(response);
 }
 
 HttpRequest parse_request(char *request_buffer) {
@@ -192,17 +203,27 @@ void handle_request(int socket, char *request_buffer) {
     return;
   }
 
-  const char* final_path = get_final_path(request.path);
+  const char *final_path = get_final_path(request.path);
+  HttpResponse *response = NULL;
 
-  if (does_path_exist(final_path) == false) {
-    perror("file does not exist...\n");
-    return;
+  // Try to serve the requested file if it exists
+  if (does_path_exist(final_path)) {
+    response = create_response(200, final_path);
   }
 
-  HttpResponse *response = create_response(200, final_path);
+  // If the requested file doesn’t exist OR response creation failed, serve 404
   if (!response) {
+    const char *fallback_path = get_final_path("/404.html");
+    response = create_response(404, fallback_path);
+  }
+
+  // Final fail-safe: give up if even 404 response can't be built
+  if (!response) {
+    fprintf(stderr, "Critical: unable to create response for path: %s\n", final_path);
+    close(socket);  // prevent resource leak
     return;
   }
 
   send_response(socket, response);
+  free(response);  // you MUST free heap memory inside your response
 }
