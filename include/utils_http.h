@@ -64,5 +64,6 @@ typedef enum {
 char *get_status_reason(int code);
 bool is_method_allowed(const char* method);
 HttpRequest parse_request(char *request_buffer);
+void free_response(HttpResponse *response);
 
 #endif /* utils_http_h */

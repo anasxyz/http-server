@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "../include/utils_http.h"
@@ -76,4 +77,12 @@ bool is_method_allowed(const char* method) {
     }
   }
   return false;
+}
+
+void free_response(HttpResponse *response) {
+  if (response) {
+    free(response->status);
+    free(response->content_type);
+    free(response);
+  }
 }
