@@ -62,7 +62,11 @@ HttpResponse* create_response(int status_code, const char* path) {
     return NULL;
   }
 
-  if (status_code == 404) { path = get_final_path("/404.html"); }
+  if (status_code >= 400 && status_code < 500) {
+    char error_path[32];
+    snprintf(error_path, sizeof(error_path), "/%d.html", status_code);
+    path = get_final_path(error_path);
+  }
 
   const char *reason = get_status_reason(status_code);
   int status_len = snprintf(NULL, 0, "HTTP/1.1 %d %s", status_code, reason);
@@ -131,9 +135,9 @@ void send_response(int socket, HttpResponse *response) {
 
   printf("Sent response: \n");
   printf("Status: %s\n", response->status);
-  // printf("Date: %s\n", response->date);
-  // printf("Server: %s\n", response->server);
-  // printf("Last-Modified: %s\n", response->last_modified);
+  printf("Date: %s\n", response->date);
+  printf("Server: %s\n", response->server);
+  printf("Last-Modified: %s\n", response->last_modified);
   printf("Content-Type: %s\n", response->content_type);
   printf("Content-Length: %lu\n", response->body_length);
   printf("Connection: %s\n", response->connection);
@@ -162,46 +166,20 @@ HttpRequest parse_request(char *request_buffer) {
 
 // handles HTTP request
 void handle_request(int socket, char *request_buffer) {
+  HttpResponse *response = NULL;
   HttpRequest request = parse_request(request_buffer);
 
+  // if request is bad, send 400 Bad Request
   if (!request.method || !request.path || !request.version) {
-    char *message = "Bad Request";
-
-    HttpResponse response = {
-        .status = "400 Bad Request",
-        .content_type = "text/plain",
-        .body = message,
-        .body_length = strlen(message),
-        .headers = NULL,
-        .num_headers = 0,
-    };
-
-    send_response(socket, &response);
-  }
-
-  // only support GET requests for now
-  if (strcmp(request.method, "GET") != 0) {
-    char *message = "Method not allowed";
-
-    HttpResponse response = {
-        .status = "405 Method Not Allowed",
-        .content_type = "text/plain",
-        .body = message,
-        .body_length = strlen(message),
-        .headers = NULL,
-        .num_headers = 0,
-    };
-
-    send_response(socket, &response);
-
-    return;
+    create_response(400, NULL);
   }
 
   const char *final_path = resolve_path(request.path);
-  HttpResponse *response = NULL;
 
-  // try to serve the requested file if it exists
-  if (does_path_exist(final_path)) {
+  // only support GET requests for now
+  if (strcmp(request.method, "GET") != 0) {
+    response = create_response(405, NULL);
+  } else if (does_path_exist(final_path)) {
     response = create_response(200, final_path);
   } else {
     response = create_response(404, final_path);
