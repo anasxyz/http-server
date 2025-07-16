@@ -12,6 +12,8 @@
 #include "../include/utils_path.h"
 #include "../include/utils_general.h"
 
+#define FALLBACK_500 "<html><head><title>500 Internal Server Error</title></head><body><h1>500 Internal Server Error</h1></body></html>"
+
 char* prepare_path(char *path) {
   char *cleaned_path = clean_path(path);
   char *full_path = get_full_path(cleaned_path);
@@ -47,14 +49,14 @@ HttpResponse* create_response(int status_code, char* path) {
     if (!file) { 
       // if we still can't open 404 page, we can assume it's a 500
       status_code = 500; 
-      body = "<h1>500 Internal Server Error</h1>"; 
+      body = FALLBACK_500;
     } else {
       // 404 page opened successfully, read it
       body = read_file(file);  
       // if we can't read the 404 page, assume 500
       if (!body) { 
         status_code = 500; 
-        body = "<h1>500 Internal Server Error</h1>"; 
+        body = FALLBACK_500;
       }
     }
   } else {
@@ -64,7 +66,7 @@ HttpResponse* create_response(int status_code, char* path) {
     // we can't read it
     if (!body) { 
       status_code = 500; 
-      body = "<h1>500 Internal Server Error</h1>"; 
+      body = FALLBACK_500;
     }
   }
 
@@ -81,9 +83,9 @@ HttpResponse* create_response(int status_code, char* path) {
   */
 
   // mock response
-  response->status = strdup_printf("%d %s", status_code, get_status_reason(status_code));
+  response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
   response->body = body;
-  response->body_length = strlen(response->body);
+  response->body_length = strlen(body);
   response->content_type = "text/html";
   response->connection = "close";
   response->date = "Thu, 01 Jan 1970 00:00:00 GMT";
