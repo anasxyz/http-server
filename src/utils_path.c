@@ -7,7 +7,7 @@
 #include <pthread.h>
 #include <sys/stat.h>
 
-#define WEB_ROOT "www"
+#include "../include/utils_path.h"
 
 char *get_mime_type(const char *path) {
   const char *extension = strrchr(path, '.');

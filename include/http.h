@@ -7,6 +7,8 @@
 #include <stdbool.h>
 
 HttpResponse *create_response(int status_code, char *path);
+HttpResponse *create_dynamic_response(int status_code, const char *content_type, char *body, size_t body_length);
+
 void send_response(int socket, HttpResponse *response);
 void handle_request(int socket, char *request);
 
