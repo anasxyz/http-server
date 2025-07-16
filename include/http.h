@@ -6,8 +6,8 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-HttpResponse *create_response(int status_code, const char *path);
+HttpResponse *create_response(int status_code, char *path);
 void send_response(int socket, HttpResponse *response);
-void handle_request(int socket, char *request_buffer);
+void handle_request(int socket, char *request);
 
 #endif /* http_h */

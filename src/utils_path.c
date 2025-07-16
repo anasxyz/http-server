@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/stat.h>
 
 #define WEB_ROOT "www"
 
@@ -26,134 +27,144 @@ char *get_mime_type(const char *path) {
   return "application/octet-stream"; // default MIME type for unknown extensions
 } 
 
-bool does_path_exist(const char *path) {
-  if (!path) { return NULL; }
+// Checks if path exists (file or directory)
+bool does_path_exist(char *path) {
+  struct stat st;
+  return (stat(path, &st) == 0);
+}
 
-  if (realpath(path, NULL) != NULL) {
-    return true;
-  } else {
+// Checks if path is a regular file
+bool is_regular_file(char *path) {
+  struct stat st;
+  if (stat(path, &st) != 0)
     return false;
-  }
+  return S_ISREG(st.st_mode);
+}
+
+// Checks if path is a directory
+bool is_directory(char *path) {
+  struct stat st;
+  if (stat(path, &st) != 0)
+    return false;
+  return S_ISDIR(st.st_mode);
 }
 
 // this took ridiuculously long to figure out
-const char* clean_path(const char* path) {
-    if (!path) return NULL;
+// anytime this is called it should be freed by the caller
+char *clean_path(char *path) {
+  if (!path)
+    return NULL;
 
-    size_t len = strlen(path);
-    if (len == 0) return strdup("");
+  size_t len = strlen(path);
+  if (len == 0)
+    return strdup(".");
 
-    // allocate room for components
-    char** stack = malloc(sizeof(char*) * (len + 1));
-    char* path_copy = strdup(path);
-    char* token;
-    size_t stack_size = 0;
+  bool had_trailing_slash = (path[len - 1] == '/');
 
-    int is_absolute = (path[0] == '/');
-    int has_trailing_slash = (path[len - 1] == '/');
+  // Allocate room for components
+  char **stack = malloc(sizeof(char *) * (len + 1));
+  char *path_copy = strdup(path);
+  char *token;
+  size_t stack_size = 0;
 
-    // tokenise and build component stack
-    token = strtok(path_copy, "/");
-    while (token != NULL) {
-        if (strcmp(token, "..") == 0) {
-            if (stack_size > 0 && strcmp(stack[stack_size - 1], "..") != 0) {
-                stack_size--;
-            } else if (!is_absolute) {
-                // relative path so keep ".."
-                stack[stack_size++] = token;
-            }
-        } else if (strcmp(token, ".") != 0 && strlen(token) > 0) {
-            stack[stack_size++] = token;
-        }
-        token = strtok(NULL, "/");
+  token = strtok(path_copy, "/");
+  while (token != NULL) {
+    if (strcmp(token, "..") == 0) {
+      if (stack_size > 0) {
+        stack_size--;
+      }
+    } else if (strcmp(token, ".") != 0 && strlen(token) > 0) {
+      stack[stack_size++] = token;
     }
-
-    // estimate total size
-    size_t result_len = 1 + (len * 2);
-    char* cleaned = malloc(result_len);
-    if (!cleaned) return NULL;
-    cleaned[0] = '\0';
-
-    if (is_absolute) strcat(cleaned, "/");
-
-    for (size_t i = 0; i < stack_size; ++i) {
-        strcat(cleaned, stack[i]);
-        if (i != stack_size - 1) strcat(cleaned, "/");
-    }
-
-    // re add trailing slash if needed
-    if (has_trailing_slash && stack_size > 0) {
-        strcat(cleaned, "/");
-    }
-
-    // if result is empty just return "." for relative or "/" for absolute
-    if (strlen(cleaned) == 0) {
-        strcpy(cleaned, is_absolute ? "/" : ".");
-    }
-
-    free(stack);
-    free(path_copy);
-    return cleaned;
-}
-
-const char* get_final_path(const char *request_path) {
-  static char full_path[1024];  // make it static so it can be safely returned
-  const char *clean_request_path = clean_path(request_path);
-
-  // if root path
-  if (strcmp(clean_request_path, "/") == 0) {
-    snprintf(full_path, sizeof(full_path), "%s/index.html", WEB_ROOT);
-  } 
-  // if ends with '/' assume directory and append index.html
-  else if (clean_request_path[strlen(clean_request_path) - 1] == '/') {
-    snprintf(full_path, sizeof(full_path), "%s%sindex.html", WEB_ROOT, clean_request_path);
-  } 
-  // else, it's a direct file
-  else {
-    snprintf(full_path, sizeof(full_path), "%s%s", WEB_ROOT, clean_request_path);
+    token = strtok(NULL, "/");
   }
 
-  const char* final_path = clean_path(full_path);
+  char *cleaned = malloc(len + 2);
+  if (!cleaned) return NULL;
+  cleaned[0] = '\0';
 
-  return final_path;
+  for (size_t i = 0; i < stack_size; ++i) {
+    strcat(cleaned, stack[i]);
+    if (i < stack_size - 1) {
+      strcat(cleaned, "/");
+    }
+  }
+
+  // Add single trailing slash back if it was present in original
+  if (had_trailing_slash && strlen(cleaned) > 0 && cleaned[strlen(cleaned) - 1] != '/') {
+    strcat(cleaned, "/");
+  }
+
+  // Handle empty path
+  if (strlen(cleaned) == 0) {
+    strcpy(cleaned, ".");
+  }
+
+  free(stack);
+  free(path_copy);
+  return cleaned;
 }
 
-const char* resolve_path(const char* request_path) {
-    static char resolved_path[1024];
-    printf("\n--- Resolving Request Path: %s ---\n", request_path);
+char *get_full_path(char *request_path) {
+  static char full_path[1024]; // make it static so it can be safely returned
 
-    // try direct path
-    const char* candidate_path = get_final_path(request_path);
-    printf("[TRY 1] Direct: %s\n", candidate_path);
-    if (does_path_exist(candidate_path)) {
-        printf("✔️  Found at direct path.\n");
-        strncpy(resolved_path, candidate_path, sizeof(resolved_path));
-        return resolved_path;
+  // if first 4 characters are "WEB_ROOT/" then just return it
+  if (strncmp(request_path, WEB_ROOT "/", strlen(WEB_ROOT) + 1) == 0) {
+    snprintf(full_path, sizeof(full_path), "%s", request_path);
+  } else {
+    snprintf(full_path, sizeof(full_path), "%s/%s", WEB_ROOT, request_path);
+  }
+  // clean it because the given path might be something like "www/"
+  // and then we add another slash inbetween
+  return full_path;
+}
+
+char *resolve_path(char *request_path) {
+  static char resolved_path[1024];
+  snprintf(resolved_path, sizeof(resolved_path), "%s", request_path);
+
+  bool has_trailing_slash = resolved_path[strlen(resolved_path) - 1] == '/';
+
+  // Case 1: If trailing slash → prioritize directory
+  if (has_trailing_slash) {
+    if (does_path_exist(resolved_path) && is_directory(resolved_path)) {
+      // Ensure there's space for "index.html"
+      if (strlen(resolved_path) + strlen("index.html") < sizeof(resolved_path)) {
+        strcat(resolved_path, "index.html");
+        if (does_path_exist(resolved_path) && is_regular_file(resolved_path)) {
+          return resolved_path;
+        }
+      }
     }
+    return NULL; // If directory/index.html not found, nothing else to do
+  }
 
-    // try appending ".html"
-    char html_request_path[1024];
-    snprintf(html_request_path, sizeof(html_request_path), "%s.html", request_path);
-    candidate_path = get_final_path(html_request_path);
-    printf("[TRY 2] With .html: %s\n", candidate_path);
-    if (does_path_exist(candidate_path)) {
-        printf("✔️  Found with .html extension.\n");
-        strncpy(resolved_path, candidate_path, sizeof(resolved_path));
-        return resolved_path;
+  // Case 2: No trailing slash → prioritize files
+
+  // Exact match as regular file
+  if (does_path_exist(resolved_path) && is_regular_file(resolved_path)) {
+    return resolved_path;
+  }
+
+  // Try adding ".html"
+  size_t len = strlen(resolved_path);
+  if (len + 5 < sizeof(resolved_path)) {
+    strcat(resolved_path, ".html");
+    if (does_path_exist(resolved_path) && is_regular_file(resolved_path)) {
+      return resolved_path;
     }
+    resolved_path[len] = '\0'; // revert
+  }
 
-    // try appending "/index.html"
-    char index_request_path[1024];
-    snprintf(index_request_path, sizeof(index_request_path), "%s/index.html", request_path);
-    candidate_path = get_final_path(index_request_path);
-    printf("[TRY 3] As directory with index.html: %s\n", candidate_path);
-    if (does_path_exist(candidate_path)) {
-        printf("✔️  Found as directory with index.html.\n");
-        strncpy(resolved_path, candidate_path, sizeof(resolved_path));
+  // Try as directory + index.html
+  if (does_path_exist(resolved_path) && is_directory(resolved_path)) {
+    if (strlen(resolved_path) + strlen("/index.html") < sizeof(resolved_path)) {
+      strcat(resolved_path, "/index.html");
+      if (does_path_exist(resolved_path) && is_regular_file(resolved_path)) {
         return resolved_path;
+      }
     }
+  }
 
-    // fallback to original
-    printf("❌  None found. Fallback to original cleaned path.\n");
-    return get_final_path(request_path);
+  return NULL;
 }

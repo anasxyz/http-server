@@ -10,50 +10,83 @@
 #include "../include/http.h"
 #include "../include/utils_http.h"
 #include "../include/utils_path.h"
+#include "../include/utils_general.h"
 
-HttpResponse* create_response(int status_code, const char* path) {
+#define FALLBACK_500 "<html><head><title>500 Internal Server Error</title></head><body><h1>500 Internal Server Error</h1></body></html>"
+
+char* prepare_path(char *path) {
+  char *cleaned_path = clean_path(path);
+  char *full_path = get_full_path(cleaned_path);
+  char *resolved_path = resolve_path(full_path);
+
+  return resolved_path;
+}
+
+HttpResponse* create_response(int status_code, char* path) {
   HttpResponse *response = malloc(sizeof(HttpResponse));
   if (!response) {
     perror("Failed to allocate memory for response...\n");
     return NULL;
   }
 
-  if (status_code >= 400 && status_code < 500) {
-    char error_path[32];
-    snprintf(error_path, sizeof(error_path), "/%d.html", status_code);
-    path = get_final_path(error_path);
+  // just for clarity 
+  char* provided_path = path;
+  char* cleaned_path = clean_path(provided_path);
+  char* full_path = get_full_path(cleaned_path);
+  char* resolved_path = resolve_path(full_path);
+
+  char* body;
+
+  FILE* file = get_file(resolved_path);
+  // if file not found or couldn't open
+  if (!file) { 
+    // if file not found or couldn't open
+    status_code = 404;
+    // set new path to 404 page
+    resolved_path = "www/404.html";
+    // try to open 404 page
+    file = get_file(resolved_path);
+    if (!file) { 
+      // if we still can't open 404 page, we can assume it's a 500
+      status_code = 500; 
+      body = FALLBACK_500;
+    } else {
+      // 404 page opened successfully, read it
+      body = read_file(file);  
+      // if we can't read the 404 page, assume 500
+      if (!body) { 
+        status_code = 500; 
+        body = FALLBACK_500;
+      }
+    }
+  } else {
+    // if we get here, we know the file exists
+    body = read_file(file);
+    // if we can't read the file then we can assume it's a 500 because the file exists but
+    // we can't read it
+    if (!body) { 
+      status_code = 500; 
+      body = FALLBACK_500;
+    }
   }
 
-  const char *reason = get_status_reason(status_code);
-  int status_len = snprintf(NULL, 0, "HTTP/1.1 %d %s", status_code, reason);
-  response->status = malloc(status_len + 1);
-  snprintf(response->status, status_len + 1, "HTTP/1.1 %d %s", status_code, reason);
+  /*
+  body = strdup_printf(
+            "Provided path: %s\n"
+            "Cleaned path: %s\n"
+            "Full path: %s\n"
+            "Resolved path: %s\n",
+            provided_path,
+            cleaned_path,
+            full_path,
+            resolved_path);
+  */
 
-  char* content_type = strdup(get_mime_type(path));  // strdup ensures ownership
-
-  FILE *file = get_file(path);
-  if (!file) {
-    fprintf(stderr, "Failed to open file: %s\n", path);
-    free(response->status);
-    free(response->content_type);
-    free(response);
-    return NULL;
-  }
-
-  char *body = read_file(file);
-  fclose(file);
-
-  if (!body) {
-    fprintf(stderr, "Failed to read file into memory: %s\n", path);
-    free(response->status);
-    free(response->content_type);
-    free(response);
-    return NULL;
-  }
-
+  // mock response
+  response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
   response->body = body;
-  response->body_length = strlen(body);  // only safe because read_file null-terminates
-  response->content_type = content_type;
+  response->body_length = strlen(body);
+  response->content_type = get_mime_type(resolved_path);
   response->connection = "close";
   response->date = "Thu, 01 Jan 1970 00:00:00 GMT";
   response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT";
@@ -84,8 +117,6 @@ void send_response(int socket, HttpResponse *response) {
            response->content_type,
            response->connection);
 
-  // TODO: explore possibility of extra headers in the future
-
   write(socket, header, strlen(header));
   write(socket, response->body, response->body_length);
 
@@ -97,29 +128,21 @@ void send_response(int socket, HttpResponse *response) {
   printf("Content-Type: %s\n", response->content_type);
   printf("Content-Length: %lu\n", response->body_length);
   printf("Connection: %s\n", response->connection);
+  printf("\n");
 }
 
 // handles HTTP request
 void handle_request(int socket, char *request_buffer) {
-  HttpResponse *response = NULL;
+  HttpResponse* response;
+
+  // parse request
   HttpRequest request = parse_request(request_buffer);
-
-  // if request is bad, send 400 Bad Request
   if (!request.method || !request.path || !request.version) {
-    create_response(400, NULL);
+    
   }
 
-  const char *final_path = resolve_path(request.path);
-
-  // only support GET requests for now
-  if (!is_method_allowed(request.method)) {
-    response = create_response(405, NULL);
-  } else if (does_path_exist(final_path)) {
-    response = create_response(200, final_path);
-  } else {
-    response = create_response(404, final_path);
-  }
-
+  response = create_response(200, request.path);
+  if (!response) { return; }
   send_response(socket, response);
-  free(response); 
+  free(response);
 }
