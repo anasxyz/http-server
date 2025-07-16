@@ -7,7 +7,7 @@
 #include <pthread.h>
 #include <sys/stat.h>
 
-#define WEB_ROOT "www"
+#include "../include/utils_path.h"
 
 char *get_mime_type(const char *path) {
   const char *extension = strrchr(path, '.');
@@ -20,7 +20,7 @@ char *get_mime_type(const char *path) {
   if (strcmp(extension, ".js") == 0) { return "text/javascript"; }
   if (strcmp(extension, ".json") == 0) { return "application/json"; }
   if (strcmp(extension, ".png") == 0) { return "image/png"; }
-  if (strcmp(extension, ".jpg") == 0) { return "image/jpeg"; }
+  if ((strcmp(extension, ".jpg") == 0) || (strcmp(extension, ".jpeg") == 0)) { return "image/jpeg"; } 
   if (strcmp(extension, ".gif") == 0) { return "image/gif"; }
   if (strcmp(extension, ".txt") == 0) { return "text/plain"; }
 

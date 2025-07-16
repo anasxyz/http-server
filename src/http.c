@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "../include/route.h"
 #include "../include/file_handler.h"
 #include "../include/http.h"
 #include "../include/utils_http.h"
@@ -29,44 +30,44 @@ HttpResponse* create_response(int status_code, char* path) {
     return NULL;
   }
 
-  // just for clarity 
-  char* provided_path = path;
-  char* cleaned_path = clean_path(provided_path);
-  char* full_path = get_full_path(cleaned_path);
-  char* resolved_path = resolve_path(full_path);
+  char* prepared_path = prepare_path(path);
 
-  char* body;
+  char* body = NULL;
+  size_t body_length = 0;
 
-  FILE* file = get_file(resolved_path);
+  FILE* file = get_file(prepared_path);
   // if file not found or couldn't open
   if (!file) { 
     // if file not found or couldn't open
     status_code = 404;
     // set new path to 404 page
-    resolved_path = "www/404.html";
+    prepared_path = strdup_printf("%s/404.html", WEB_ROOT);
     // try to open 404 page
-    file = get_file(resolved_path);
+    file = get_file(prepared_path);
     if (!file) { 
       // if we still can't open 404 page, we can assume it's a 500
       status_code = 500; 
       body = FALLBACK_500;
+      body_length = strlen(body);
     } else {
       // 404 page opened successfully, read it
-      body = read_file(file);  
+      body = read_file(file, &body_length);  
       // if we can't read the 404 page, assume 500
       if (!body) { 
         status_code = 500; 
         body = FALLBACK_500;
+        body_length = strlen(body);
       }
     }
   } else {
     // if we get here, we know the file exists
-    body = read_file(file);
+    body = read_file(file, &body_length);
     // if we can't read the file then we can assume it's a 500 because the file exists but
     // we can't read it
     if (!body) { 
       status_code = 500; 
       body = FALLBACK_500;
+      body_length = strlen(body);
     }
   }
 
@@ -85,12 +86,42 @@ HttpResponse* create_response(int status_code, char* path) {
   // mock response
   response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
   response->body = body;
-  response->body_length = strlen(body);
-  response->content_type = get_mime_type(resolved_path);
+  response->body_length = body_length;
+  response->content_type = get_mime_type(prepared_path);
   response->connection = "close";
   response->date = "Thu, 01 Jan 1970 00:00:00 GMT";
   response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT";
   response->server = "http-server";
+  response->headers = NULL;
+  response->num_headers = 0;
+
+  return response;
+}
+
+HttpResponse* create_dynamic_response(int status_code, const char *content_type, char* body, size_t body_length) {
+  HttpResponse *response = malloc(sizeof(HttpResponse));
+  if (!response) {
+    perror("Failed to allocate memory for response...\n");
+    return NULL;
+  }
+
+  // Duplicate body since body might be ephemeral
+  char *body_copy = malloc(body_length);
+  if (!body_copy) {
+    free(response);
+    perror("Failed to allocate memory for body");
+    return NULL;
+  }
+  memcpy(body_copy, body, body_length);
+
+  response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
+  response->body = body_copy;
+  response->body_length = body_length;
+  response->content_type = strdup(content_type);
+  response->connection = strdup("close");
+  response->date = strdup("Thu, 01 Jan 1970 00:00:00 GMT");
+  response->last_modified = strdup("Thu, 01 Jan 1970 00:00:00 GMT"); 
+  response->server = strdup("http-server");
   response->headers = NULL;
   response->num_headers = 0;
 
@@ -137,11 +168,32 @@ void handle_request(int socket, char *request_buffer) {
 
   // parse request
   HttpRequest request = parse_request(request_buffer);
+
+  // check if request is valid
   if (!request.method || !request.path || !request.version) {
-    
+    response = create_response(400, request.path);
+    if (!response) { return; }
+    send_response(socket, response);
+    free(response);
+    return;
   }
 
-  response = create_response(200, request.path);
+  // choose static or dynamic response based on request
+  bool matched = false;
+  for (size_t i = 0; i < num_routes; ++i) {
+    if (strcmp(request.method, routes[i].method) == 0 &&
+      strcmp(request.path, routes[i].path) == 0) {
+      // Call the route handler function
+      response = routes[i].handler();
+      matched = true;
+      break;
+    }
+  }
+
+  if (!matched) {
+    response = create_response(200, request.path);
+  }
+
   if (!response) { return; }
   send_response(socket, response);
   free(response);

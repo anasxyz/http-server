@@ -41,7 +41,7 @@ typedef struct {
   char *content_type;
   char *connection;
 
-  const char *body;
+  char *body;
   size_t body_length;
   Header *headers;
   size_t num_headers;
