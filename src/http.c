@@ -21,7 +21,7 @@ HttpResponse* create_response(int status_code, const char* path) {
   if (status_code >= 400 && status_code < 500) {
     char error_path[32];
     snprintf(error_path, sizeof(error_path), "/%d.html", status_code);
-    path = get_final_path(error_path);
+    path = resolve_path(error_path);
   }
 
   const char *reason = get_status_reason(status_code);
