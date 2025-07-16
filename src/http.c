@@ -190,7 +190,6 @@ void handle_request(int socket, char *request_buffer) {
   if (matched) {
     char *trimmed_path = trim_prefix(request.path, matched->prefix);
 
-    free(request.path); 
     request.path = trimmed_path;
 
     printf("Matched route: prefix=%s, host=%s, port=%d, trimmed path=%s\n",
