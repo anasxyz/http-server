@@ -86,7 +86,7 @@ HttpResponse* create_response(int status_code, char* path) {
   response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
   response->body = body;
   response->body_length = strlen(body);
-  response->content_type = "text/html";
+  response->content_type = get_mime_type(resolved_path);
   response->connection = "close";
   response->date = "Thu, 01 Jan 1970 00:00:00 GMT";
   response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT";
