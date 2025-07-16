@@ -9,7 +9,7 @@
 #include "../include/proxy.h"
 #include "../include/utils_http.h"
 
-HttpResponse *proxy_to_backend(HttpRequest request) {
+HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
   // backend socket
   int backend_socket = socket(AF_INET, SOCK_STREAM, 0);
   if (backend_socket < 0) {
@@ -21,10 +21,10 @@ HttpResponse *proxy_to_backend(HttpRequest request) {
   struct sockaddr_in backend_addr;
   memset(&backend_addr, 0, sizeof(backend_addr));
   backend_addr.sin_family = AF_INET;           // IPv4
-  backend_addr.sin_port = htons(BACKEND_PORT); // set port
+  backend_addr.sin_port = htons(port); // set port
 
   // convert backend address to network byte order
-  if (inet_pton(AF_INET, BACKEND_HOST, &backend_addr.sin_addr) <= 0) {
+  if (inet_pton(AF_INET, host, &backend_addr.sin_addr) <= 0) {
     perror("Invalid backend address");
     close(backend_socket);
     return NULL;
@@ -45,7 +45,7 @@ HttpResponse *proxy_to_backend(HttpRequest request) {
            "Host: %s:%d\r\n"
            "Connection: close\r\n"
            "\r\n",
-           request.method, request.path, BACKEND_HOST, BACKEND_PORT);
+           request.method, request.path, host, port);
 
   // send request to backend
   if (write(backend_socket, request_buffer, strlen(request_buffer)) < 0) {

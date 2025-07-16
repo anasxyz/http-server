@@ -6,6 +6,6 @@
 #define BACKEND_HOST "127.0.0.1"
 #define BACKEND_PORT 5050
 
-HttpResponse* proxy_to_backend(HttpRequest request);
+HttpResponse* proxy_to_backend(HttpRequest request, char *host, int port);
 
 #endif /* proxy_h */

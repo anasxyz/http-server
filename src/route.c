@@ -7,18 +7,21 @@
 #include <string.h>
 
 #include "../include/route.h"
-#include "../include/http.h"
-#include "../include/utils_http.h"
+#include "../include/proxy.h"
 
 Route routes[] = {
-  {"GET", "/api/status", handle_status},
-  // Add more here
+  { "/api/status", BACKEND_HOST, BACKEND_PORT },
+  { "/api/files", BACKEND_HOST, BACKEND_PORT },
 };
 
 const size_t num_routes = sizeof(routes) / sizeof(Route);
 
-HttpResponse* handle_status() {
-  char* json_body = "{\"status\": \"ok\"}";
-  HttpResponse *response = create_dynamic_response(200, "application/json", json_body, strlen(json_body));
-  return response;
+Route* match_route(char *path) {
+    for (size_t i = 0; i < num_routes; i++) {
+        if (strncmp(path, routes[i].prefix, strlen(routes[i].prefix)) == 0) {
+            return &routes[i];
+        }
+    }
+    return NULL;
 }
+

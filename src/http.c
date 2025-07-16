@@ -1,23 +1,26 @@
+#include <arpa/inet.h>
 #include <linux/limits.h>
+#include <netinet/in.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
 
-#include "../include/proxy.h"
+#include "../include/route.h"
 #include "../include/file_handler.h"
 #include "../include/http.h"
+#include "../include/proxy.h"
+#include "../include/utils_general.h"
 #include "../include/utils_http.h"
 #include "../include/utils_path.h"
-#include "../include/utils_general.h"
 
-#define FALLBACK_500 "<html><head><title>500 Internal Server Error</title></head><body><h1>500 Internal Server Error</h1></body></html>"
+#define FALLBACK_500                                                           \
+  "<html><head><title>500 Internal Server Error</title></head><body><h1>500 "  \
+  "Internal Server Error</h1></body></html>"
 
-char* prepare_path(char *path) {
+char *prepare_path(char *path) {
   char *cleaned_path = clean_path(path);
   char *full_path = get_full_path(cleaned_path);
   char *resolved_path = resolve_path(full_path);
@@ -25,38 +28,38 @@ char* prepare_path(char *path) {
   return resolved_path;
 }
 
-HttpResponse* create_response(int status_code, char* path) {
+HttpResponse *create_response(int status_code, char *path) {
   HttpResponse *response = malloc(sizeof(HttpResponse));
   if (!response) {
     perror("Failed to allocate memory for response...\n");
     return NULL;
   }
 
-  char* prepared_path = prepare_path(path);
+  char *prepared_path = prepare_path(path);
 
-  char* body = NULL;
+  char *body = NULL;
   size_t body_length = 0;
 
-  FILE* file = get_file(prepared_path);
+  FILE *file = get_file(prepared_path);
   // if file not found or couldn't open
-  if (!file) { 
+  if (!file) {
     // if file not found or couldn't open
     status_code = 404;
     // set new path to 404 page
     prepared_path = strdup_printf("%s/404.html", WEB_ROOT);
     // try to open 404 page
     file = get_file(prepared_path);
-    if (!file) { 
+    if (!file) {
       // if we still can't open 404 page, we can assume it's a 500
-      status_code = 500; 
+      status_code = 500;
       body = FALLBACK_500;
       body_length = strlen(body);
     } else {
       // 404 page opened successfully, read it
-      body = read_file(file, &body_length);  
+      body = read_file(file, &body_length);
       // if we can't read the 404 page, assume 500
-      if (!body) { 
-        status_code = 500; 
+      if (!body) {
+        status_code = 500;
         body = FALLBACK_500;
         body_length = strlen(body);
       }
@@ -64,10 +67,10 @@ HttpResponse* create_response(int status_code, char* path) {
   } else {
     // if we get here, we know the file exists
     body = read_file(file, &body_length);
-    // if we can't read the file then we can assume it's a 500 because the file exists but
-    // we can't read it
-    if (!body) { 
-      status_code = 500; 
+    // if we can't read the file then we can assume it's a 500 because the file
+    // exists but we can't read it
+    if (!body) {
+      status_code = 500;
       body = FALLBACK_500;
       body_length = strlen(body);
     }
@@ -86,7 +89,8 @@ HttpResponse* create_response(int status_code, char* path) {
   */
 
   // mock response
-  response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
+  response->status = strdup_printf("HTTP/1.1 %d %s", status_code,
+                                   get_status_reason(status_code));
   response->body = body;
   response->body_length = body_length;
   response->content_type = get_mime_type(prepared_path);
@@ -100,7 +104,8 @@ HttpResponse* create_response(int status_code, char* path) {
   return response;
 }
 
-HttpResponse* create_dynamic_response(int status_code, const char *content_type, char* body, size_t body_length) {
+HttpResponse *create_dynamic_response(int status_code, const char *content_type,
+                                      char *body, size_t body_length) {
   HttpResponse *response = malloc(sizeof(HttpResponse));
   if (!response) {
     perror("Failed to allocate memory for response...\n");
@@ -116,13 +121,14 @@ HttpResponse* create_dynamic_response(int status_code, const char *content_type,
   }
   memcpy(body_copy, body, body_length);
 
-  response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
+  response->status = strdup_printf("HTTP/1.1 %d %s", status_code,
+                                   get_status_reason(status_code));
   response->body = body_copy;
   response->body_length = body_length;
   response->content_type = strdup(content_type);
   response->connection = strdup("close");
   response->date = strdup("Thu, 01 Jan 1970 00:00:00 GMT");
-  response->last_modified = strdup("Thu, 01 Jan 1970 00:00:00 GMT"); 
+  response->last_modified = strdup("Thu, 01 Jan 1970 00:00:00 GMT");
   response->server = strdup("http-server");
   response->headers = NULL;
   response->num_headers = 0;
@@ -142,13 +148,9 @@ void send_response(int socket, HttpResponse *response) {
            "Content-Type: %s\r\n"
            "Connection: %s\r\n"
            "\r\n",
-           response->status, 
-           response->date, 
-           response->server, 
-           response->last_modified, 
-           response->body_length,
-           response->content_type,
-           response->connection);
+           response->status, response->date, response->server,
+           response->last_modified, response->body_length,
+           response->content_type, response->connection);
 
   write(socket, header, strlen(header));
   write(socket, response->body, response->body_length);
@@ -166,7 +168,7 @@ void send_response(int socket, HttpResponse *response) {
 
 // handles HTTP request
 void handle_request(int socket, char *request_buffer) {
-  HttpResponse* response;
+  HttpResponse *response;
 
   // parse request
   HttpRequest request = parse_request(request_buffer);
@@ -174,20 +176,27 @@ void handle_request(int socket, char *request_buffer) {
   // check if request is valid
   if (!request.method || !request.path || !request.version) {
     response = create_response(400, request.path);
-    if (!response) { return; }
+    if (!response) {
+      return;
+    }
     send_response(socket, response);
     free(response);
     return;
   }
 
   // choose static or dynamic response based on request
-  if (strncmp(request.path, "/api", 4) == 0) {
-    response = proxy_to_backend(request);
+  Route *matched = match_route(request.path);
+
+  if (matched) {
+    response = proxy_to_backend(request, matched->host, matched->port);
+    // print here
   } else {
-    response = create_response(200, request.path);
+    response = create_response(200, request.path); // static
   }
 
-  if (!response) { return; }
+  if (!response) {
+    return;
+  }
   send_response(socket, response);
   free(response);
 }
