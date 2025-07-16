@@ -5,8 +5,10 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
-#include "../include/route.h"
+#include "../include/proxy.h"
 #include "../include/file_handler.h"
 #include "../include/http.h"
 #include "../include/utils_http.h"
@@ -179,18 +181,9 @@ void handle_request(int socket, char *request_buffer) {
   }
 
   // choose static or dynamic response based on request
-  bool matched = false;
-  for (size_t i = 0; i < num_routes; ++i) {
-    if (strcmp(request.method, routes[i].method) == 0 &&
-      strcmp(request.path, routes[i].path) == 0) {
-      // Call the route handler function
-      response = routes[i].handler();
-      matched = true;
-      break;
-    }
-  }
-
-  if (!matched) {
+  if (strncmp(request.path, "/api", 4) == 0) {
+    response = proxy_to_backend(request);
+  } else {
     response = create_response(200, request.path);
   }
 
