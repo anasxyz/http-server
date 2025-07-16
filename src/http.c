@@ -10,17 +10,33 @@
 #include "../include/http.h"
 #include "../include/utils_http.h"
 #include "../include/utils_path.h"
+#include "../include/utils_general.h"
 
-HttpResponse* create_response(int status_code, const char* path) {
+HttpResponse* create_response(int status_code, char* path) {
   HttpResponse *response = malloc(sizeof(HttpResponse));
   if (!response) {
     perror("Failed to allocate memory for response...\n");
     return NULL;
   }
 
+  char* provided_path = path;
+  char* cleaned_path = clean_path(provided_path);
+  char* full_path = get_full_path(cleaned_path);
+  char* resolved_path = resolve_path(full_path);
+
+  char *body = strdup_printf(
+            "Provided path: %s\n"
+            "Cleaned path: %s\n"
+            "Full path: %s\n"
+            "Resolved path: %s\n",
+            provided_path,
+            cleaned_path,
+            full_path,
+            resolved_path);
+
   // mock response
   response->status = "HTTP/1.1 200 OK";
-  response->body = path;
+  response->body = body;
   response->body_length = strlen(response->body);
   response->content_type = "text/plain";
   response->connection = "close";
@@ -79,4 +95,5 @@ void handle_request(int socket, char *request_buffer) {
 
   response = create_response(200, request.path);
   send_response(socket, response);
+  free(response);
 }

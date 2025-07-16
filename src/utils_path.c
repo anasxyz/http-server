@@ -28,13 +28,13 @@ char *get_mime_type(const char *path) {
 } 
 
 // Checks if path exists (file or directory)
-bool does_path_exist(const char *path) {
+bool does_path_exist(char *path) {
   struct stat st;
   return (stat(path, &st) == 0);
 }
 
 // Checks if path is a regular file
-bool is_regular_file(const char *path) {
+bool is_regular_file(char *path) {
   struct stat st;
   if (stat(path, &st) != 0)
     return false;
@@ -42,7 +42,7 @@ bool is_regular_file(const char *path) {
 }
 
 // Checks if path is a directory
-bool is_directory(const char *path) {
+bool is_directory(char *path) {
   struct stat st;
   if (stat(path, &st) != 0)
     return false;
@@ -51,7 +51,7 @@ bool is_directory(const char *path) {
 
 // this took ridiuculously long to figure out
 // anytime this is called it should be freed by the caller
-char *clean_path(const char *path) {
+char *clean_path(char *path) {
   if (!path)
     return NULL;
 
@@ -105,7 +105,7 @@ char *clean_path(const char *path) {
   return cleaned;
 }
 
-char *get_full_path(const char *request_path) {
+char *get_full_path(char *request_path) {
   static char full_path[1024]; // make it static so it can be safely returned
 
   // if first 4 characters are "WEB_ROOT/" then just return it
