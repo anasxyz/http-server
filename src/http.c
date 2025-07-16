@@ -35,7 +35,8 @@ HttpResponse* create_response(int status_code, char* path) {
   char* full_path = get_full_path(cleaned_path);
   char* resolved_path = resolve_path(full_path);
 
-  char* body;
+  char* body = NULL;
+  size_t body_length = 0;
 
   FILE* file = get_file(resolved_path);
   // if file not found or couldn't open
@@ -50,23 +51,26 @@ HttpResponse* create_response(int status_code, char* path) {
       // if we still can't open 404 page, we can assume it's a 500
       status_code = 500; 
       body = FALLBACK_500;
+      body_length = strlen(body);
     } else {
       // 404 page opened successfully, read it
-      body = read_file(file);  
+      body = read_file(file, &body_length);  
       // if we can't read the 404 page, assume 500
       if (!body) { 
         status_code = 500; 
         body = FALLBACK_500;
+        body_length = strlen(body);
       }
     }
   } else {
     // if we get here, we know the file exists
-    body = read_file(file);
+    body = read_file(file, &body_length);
     // if we can't read the file then we can assume it's a 500 because the file exists but
     // we can't read it
     if (!body) { 
       status_code = 500; 
       body = FALLBACK_500;
+      body_length = strlen(body);
     }
   }
 
@@ -85,7 +89,7 @@ HttpResponse* create_response(int status_code, char* path) {
   // mock response
   response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
   response->body = body;
-  response->body_length = strlen(body);
+  response->body_length = body_length;
   response->content_type = get_mime_type(resolved_path);
   response->connection = "close";
   response->date = "Thu, 01 Jan 1970 00:00:00 GMT";

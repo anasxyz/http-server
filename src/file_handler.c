@@ -19,20 +19,28 @@ FILE* get_file(const char *path) {
 }
 
 // reads file into buffer
-char* read_file(FILE *file) {
-  fseek(file, 0, SEEK_END);
-  long file_size = ftell(file);
-  fseek(file, 0, SEEK_SET);
+char* read_file(FILE* file, size_t* length_out) {
+    fseek(file, 0, SEEK_END);
+    long length = ftell(file);
+    rewind(file);
 
-  char *file_buffer = malloc(file_size);
-  if (!file_buffer) {
+    if (length <= 0) return NULL;  // Ensure length is valid before cast
+
+    size_t size = (size_t) length;
+
+    char* buffer = malloc(size);
+    if (!buffer) return NULL;
+
+    size_t read = fread(buffer, 1, size, file);
     fclose(file);
-    return NULL;
-  }
 
-  fread(file_buffer, 1, file_size, file);
+    if (read != size) {
+        free(buffer);
+        return NULL;
+    }
 
-  return file_buffer;
+    *length_out = size;
+    return buffer;
 }
 
 
