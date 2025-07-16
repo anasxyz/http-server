@@ -8,10 +8,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "../include/route.h"
 #include "../include/file_handler.h"
 #include "../include/http.h"
 #include "../include/proxy.h"
+#include "../include/route.h"
 #include "../include/utils_general.h"
 #include "../include/utils_http.h"
 #include "../include/utils_path.h"
@@ -188,8 +188,15 @@ void handle_request(int socket, char *request_buffer) {
   Route *matched = match_route(request.path);
 
   if (matched) {
+    char *trimmed_path = trim_prefix(request.path, matched->prefix);
+
+    free(request.path); 
+    request.path = trimmed_path;
+
+    printf("Matched route: prefix=%s, host=%s, port=%d, trimmed path=%s\n",
+           matched->prefix, matched->host, matched->port, request.path);
+
     response = proxy_to_backend(request, matched->host, matched->port);
-    // print here
   } else {
     response = create_response(200, request.path); // static
   }

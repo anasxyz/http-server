@@ -20,5 +20,6 @@ extern Route routes[];
 extern const size_t num_routes;
 
 Route* match_route(char *path);
+char *trim_prefix(const char *path, const char *prefix);
 
 #endif /* route_h */

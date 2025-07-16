@@ -25,3 +25,15 @@ Route* match_route(char *path) {
     return NULL;
 }
 
+char *trim_prefix(const char *path, const char *prefix) {
+    size_t prefix_len = strlen(prefix);
+    if (strncmp(path, prefix, prefix_len) == 0) {
+        // If it exactly matches the prefix, return "/"
+        if (path[prefix_len] == '\0') {
+            return strdup("/");
+        }
+        return strdup(path + prefix_len);
+    }
+    return strdup(path); // fallback (shouldn't happen if matched)
+}
+
