@@ -11,7 +11,7 @@
 FILE* get_file(const char *path) {
   FILE *file = fopen(path, "rb");
   if (!file) {
-    perror("Failed to open file...\n");
+    // perror("Failed to open file...\n");
     return NULL;
   }
   

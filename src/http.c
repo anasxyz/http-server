@@ -12,6 +12,14 @@
 #include "../include/utils_path.h"
 #include "../include/utils_general.h"
 
+char* prepare_path(char *path) {
+  char *cleaned_path = clean_path(path);
+  char *full_path = get_full_path(cleaned_path);
+  char *resolved_path = resolve_path(full_path);
+
+  return resolved_path;
+}
+
 HttpResponse* create_response(int status_code, char* path) {
   HttpResponse *response = malloc(sizeof(HttpResponse));
   if (!response) {
@@ -19,12 +27,49 @@ HttpResponse* create_response(int status_code, char* path) {
     return NULL;
   }
 
+  // just for clarity 
   char* provided_path = path;
   char* cleaned_path = clean_path(provided_path);
   char* full_path = get_full_path(cleaned_path);
   char* resolved_path = resolve_path(full_path);
 
-  char *body = strdup_printf(
+  char* body;
+
+  FILE* file = get_file(resolved_path);
+  // if file not found or couldn't open
+  if (!file) { 
+    // if file not found or couldn't open
+    status_code = 404;
+    // set new path to 404 page
+    resolved_path = "www/404.html";
+    // try to open 404 page
+    file = get_file(resolved_path);
+    if (!file) { 
+      // if we still can't open 404 page, we can assume it's a 500
+      status_code = 500; 
+      body = "<h1>500 Internal Server Error</h1>"; 
+    } else {
+      // 404 page opened successfully, read it
+      body = read_file(file);  
+      // if we can't read the 404 page, assume 500
+      if (!body) { 
+        status_code = 500; 
+        body = "<h1>500 Internal Server Error</h1>"; 
+      }
+    }
+  } else {
+    // if we get here, we know the file exists
+    body = read_file(file);
+    // if we can't read the file then we can assume it's a 500 because the file exists but
+    // we can't read it
+    if (!body) { 
+      status_code = 500; 
+      body = "<h1>500 Internal Server Error</h1>"; 
+    }
+  }
+
+  /*
+  body = strdup_printf(
             "Provided path: %s\n"
             "Cleaned path: %s\n"
             "Full path: %s\n"
@@ -33,12 +78,13 @@ HttpResponse* create_response(int status_code, char* path) {
             cleaned_path,
             full_path,
             resolved_path);
+  */
 
   // mock response
-  response->status = "HTTP/1.1 200 OK";
+  response->status = strdup_printf("%d %s", status_code, get_status_reason(status_code));
   response->body = body;
   response->body_length = strlen(response->body);
-  response->content_type = "text/plain";
+  response->content_type = "text/html";
   response->connection = "close";
   response->date = "Thu, 01 Jan 1970 00:00:00 GMT";
   response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT";
@@ -94,6 +140,7 @@ void handle_request(int socket, char *request_buffer) {
   }
 
   response = create_response(200, request.path);
+  if (!response) { return; }
   send_response(socket, response);
   free(response);
 }
