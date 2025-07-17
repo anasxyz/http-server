@@ -22,14 +22,6 @@
   "<html><head><title>500 Internal Server Error</title></head><body><h1>500 "  \
   "Internal Server Error</h1></body></html>"
 
-char *prepare_path(char *path) {
-  char *cleaned_path = clean_path(path);
-  char *full_path = get_full_path(cleaned_path);
-  char *resolved_path = resolve_path(full_path);
-
-  return resolved_path;
-}
-
 HttpResponse *create_response(int status_code, char *path) {
   HttpResponse *response = malloc(sizeof(HttpResponse));
   if (!response) {
@@ -37,7 +29,7 @@ HttpResponse *create_response(int status_code, char *path) {
     return NULL;
   }
 
-  char *prepared_path = prepare_path(path);
+  char *prepared_path = path_pipeline(path);
 
   char *body = NULL;
   size_t body_length = 0;

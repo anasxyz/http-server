@@ -169,3 +169,12 @@ char *resolve_path(char *request_path) {
 
   return NULL;
 }
+
+char *path_pipeline(char *path) {
+  char *cleaned_path = clean_path(path);
+  char *full_path = get_full_path(cleaned_path);
+  char *resolved_path = resolve_path(full_path);
+
+  return resolved_path;
+}
+

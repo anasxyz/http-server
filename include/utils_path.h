@@ -8,5 +8,6 @@ bool is_directory(char *path);
 char* clean_path(char *path);
 char* get_full_path(char *path);
 char* resolve_path(char* path);
+char *path_pipeline(char *path);
 
 #endif /* utils_path_h */

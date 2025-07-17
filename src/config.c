@@ -3,8 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../include/utils_path.h"
+
 int SERVER_PORT = 8080;
-const char *WEB_ROOT = "www/";
+char *WEB_ROOT = "";
 Route *routes = NULL;
 size_t num_routes = 0;
 
@@ -32,12 +34,11 @@ void load_config(const char *filename) {
     key[strcspn(key, "\r\n")] = '\0';
     value[strcspn(value, "\r\n")] = '\0';
 
-    if (strcmp(key, "SERVER_PORT") == 0) {
+    if (strcmp(key, "PORT") == 0) {
       SERVER_PORT = atoi(value);
-    } else if (strcmp(key, "WEB_ROOT") == 0) {
-      // WEB_ROOT = strdup(value);
+    } else if (strcmp(key, "ROOT") == 0) {
+      WEB_ROOT = strdup(value);
     } else if (strcmp(key, "ROUTE") == 0) {
-      // Parse ROUTE line: prefix,host,port
       char *prefix = strtok(value, ",");
       char *host = strtok(NULL, ",");
       char *port_str = strtok(NULL, ",");
@@ -64,8 +65,8 @@ void load_config(const char *filename) {
   fclose(f);
 
   printf("=== Loaded Config ===\n");
-  printf("SERVER_PORT = %d\n", SERVER_PORT);
-  printf("WEB_ROOT = %s\n", WEB_ROOT);
+  printf("PORT = %d\n", SERVER_PORT);
+  printf("ROOT = %s\n", clean_path(WEB_ROOT));
   printf("Routes (%zu):\n", num_routes);
   for (size_t i = 0; i < num_routes; i++) {
     printf("  Route %zu: prefix='%s', host='%s', port=%d\n", i + 1,
