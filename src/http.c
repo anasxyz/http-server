@@ -18,71 +18,47 @@
 #include "../include/utils_http.h"
 #include "../include/utils_path.h"
 
-#define FALLBACK_500                                                           \
-  "<html><head><title>500 Internal Server Error</title></head><body><h1>500 "  \
-  "Internal Server Error</h1></body></html>"
-
 HttpResponse *create_response(int status_code, char *path) {
   HttpResponse *response = malloc(sizeof(HttpResponse));
   if (!response) {
-    perror("Failed to allocate memory for response...\n");
+    perror("Failed to allocate memory for response");
     return NULL;
   }
 
   char *prepared_path = path_pipeline(path);
-
   char *body = NULL;
   size_t body_length = 0;
-
   FILE *file = get_file(prepared_path);
-  // if file not found or couldn't open
+
   if (!file) {
-    // if file not found or couldn't open
-    status_code = 404;
-    // set new path to 404 page
+    free(prepared_path);
     prepared_path = strdup_printf("%s/404.html", WEB_ROOT);
-    // try to open 404 page
     file = get_file(prepared_path);
+
     if (!file) {
-      // if we still can't open 404 page, we can assume it's a 500
+      // fallback 500
       status_code = 500;
       body = FALLBACK_500;
       body_length = strlen(body);
     } else {
-      // 404 page opened successfully, read it
       body = read_file(file, &body_length);
-      // if we can't read the 404 page, assume 500
       if (!body) {
+        // fallback 500
         status_code = 500;
         body = FALLBACK_500;
         body_length = strlen(body);
       }
     }
   } else {
-    // if we get here, we know the file exists
     body = read_file(file, &body_length);
-    // if we can't read the file then we can assume it's a 500 because the file
-    // exists but we can't read it
     if (!body) {
+      // fallback 500
       status_code = 500;
       body = FALLBACK_500;
       body_length = strlen(body);
     }
   }
 
-  /*
-  body = strdup_printf(
-            "Provided path: %s\n"
-            "Cleaned path: %s\n"
-            "Full path: %s\n"
-            "Resolved path: %s\n",
-            provided_path,
-            cleaned_path,
-            full_path,
-            resolved_path);
-  */
-
-  // mock response
   response->status = strdup_printf("HTTP/1.1 %d %s", status_code,
                                    get_status_reason(status_code));
   response->body = body;
@@ -95,38 +71,7 @@ HttpResponse *create_response(int status_code, char *path) {
   response->headers = NULL;
   response->num_headers = 0;
 
-  return response;
-}
-
-HttpResponse *create_dynamic_response(int status_code, const char *content_type,
-                                      char *body, size_t body_length) {
-  HttpResponse *response = malloc(sizeof(HttpResponse));
-  if (!response) {
-    perror("Failed to allocate memory for response...\n");
-    return NULL;
-  }
-
-  // Duplicate body since body might be ephemeral
-  char *body_copy = malloc(body_length);
-  if (!body_copy) {
-    free(response);
-    perror("Failed to allocate memory for body");
-    return NULL;
-  }
-  memcpy(body_copy, body, body_length);
-
-  response->status = strdup_printf("HTTP/1.1 %d %s", status_code,
-                                   get_status_reason(status_code));
-  response->body = body_copy;
-  response->body_length = body_length;
-  response->content_type = strdup(content_type);
-  response->connection = strdup("close");
-  response->date = strdup("Thu, 01 Jan 1970 00:00:00 GMT");
-  response->last_modified = strdup("Thu, 01 Jan 1970 00:00:00 GMT");
-  response->server = strdup("http-server");
-  response->headers = NULL;
-  response->num_headers = 0;
-
+  free(prepared_path);
   return response;
 }
 
@@ -160,21 +105,6 @@ void send_response(int socket, HttpResponse *response) {
   printf("\n");
 }
 
-char *normalise_path(const char *path) {
-  char *normalized = malloc(strlen(path) + 1);
-  if (!normalized) return NULL;
-
-  char prev = 0;
-  char *dst = normalized;
-  for (const char *src = path; *src; ++src) {
-    if (*src == '/' && prev == '/') continue;
-    *dst++ = *src;
-    prev = *src;
-  }
-  *dst = '\0';
-  return normalized;
-}
-
 // handles HTTP request
 void handle_request(int socket, char *request_buffer) {
   HttpResponse *response;
@@ -199,8 +129,8 @@ void handle_request(int socket, char *request_buffer) {
   if (matched) {
     char *trimmed_path = trim_prefix(request.path, matched->prefix);
 
-    // Combine matched->backend_path and trimmed_path
-    // Ensure proper slashes: avoid "//" or missing "/"
+    // combine matched->backend_path and trimmed_path
+    // avoid "//" or missing "/"
     char full_backend_path[1024];
     snprintf(full_backend_path, sizeof(full_backend_path), "%s/%s",
              matched->backend_path, trimmed_path);
@@ -228,5 +158,3 @@ void handle_request(int socket, char *request_buffer) {
   send_response(socket, response);
   free(response);
 }
-
-
