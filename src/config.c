@@ -35,7 +35,7 @@ void load_config(const char *filename) {
     if (strcmp(key, "SERVER_PORT") == 0) {
       SERVER_PORT = atoi(value);
     } else if (strcmp(key, "WEB_ROOT") == 0) {
-      WEB_ROOT = strdup(value);
+      // WEB_ROOT = strdup(value);
     } else if (strcmp(key, "ROUTE") == 0) {
       // Parse ROUTE line: prefix,host,port
       char *prefix = strtok(value, ",");

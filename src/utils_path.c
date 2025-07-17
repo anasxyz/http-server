@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <sys/stat.h>
 
+#include "../include/config.h"
 #include "../include/utils_path.h"
 
 char *get_mime_type(const char *path) {
@@ -109,7 +110,7 @@ char *get_full_path(char *request_path) {
   static char full_path[1024]; // make it static so it can be safely returned
 
   // if first 4 characters are "WEB_ROOT/" then just return it
-  if (strncmp(request_path, WEB_ROOT "/", strlen(WEB_ROOT) + 1) == 0) {
+  if (strncmp(request_path, WEB_ROOT, strlen(WEB_ROOT)) == 0) {
     snprintf(full_path, sizeof(full_path), "%s", request_path);
   } else {
     snprintf(full_path, sizeof(full_path), "%s/%s", WEB_ROOT, request_path);
