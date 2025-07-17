@@ -28,13 +28,11 @@ char *get_mime_type(const char *path) {
   return "application/octet-stream"; // default MIME type for unknown extensions
 } 
 
-// Checks if path exists (file or directory)
 bool does_path_exist(char *path) {
   struct stat st;
   return (stat(path, &st) == 0);
 }
 
-// Checks if path is a regular file
 bool is_regular_file(char *path) {
   struct stat st;
   if (stat(path, &st) != 0)
@@ -42,7 +40,6 @@ bool is_regular_file(char *path) {
   return S_ISREG(st.st_mode);
 }
 
-// Checks if path is a directory
 bool is_directory(char *path) {
   struct stat st;
   if (stat(path, &st) != 0)
@@ -63,7 +60,6 @@ char *clean_path(char *path) {
   bool had_leading_slash = (path[0] == '/');
   bool had_trailing_slash = (path[len - 1] == '/');
 
-  // Allocate for component stack
   char **stack = malloc(sizeof(char *) * (len + 1));
   if (!stack) return NULL;
 
@@ -87,7 +83,6 @@ char *clean_path(char *path) {
     token = strtok(NULL, "/");
   }
 
-  // Estimate cleaned path size
   size_t cleaned_len = 2 + len;  // generous size
   char *cleaned = malloc(cleaned_len);
   if (!cleaned) {
@@ -115,7 +110,6 @@ char *clean_path(char *path) {
     }
   }
 
-  // If empty, default to "."
   if (strlen(cleaned) == 0) {
     strcpy(cleaned, ".");
   }
@@ -145,7 +139,7 @@ char *resolve_path(char *request_path) {
 
   bool has_trailing_slash = resolved_path[strlen(resolved_path) - 1] == '/';
 
-  // Case 1: If trailing slash → prioritize directory
+  // case 1: If trailing slash prioritise directory
   if (has_trailing_slash) {
     if (does_path_exist(resolved_path) && is_directory(resolved_path)) {
       // Ensure there's space for "index.html"
@@ -156,17 +150,17 @@ char *resolve_path(char *request_path) {
         }
       }
     }
-    return NULL; // If directory/index.html not found, nothing else to do
+    return NULL; // if directory/index.html not found, nothing else to do
   }
 
-  // Case 2: No trailing slash → prioritize files
+  // case 2: no trailing slash prioritise files
 
-  // Exact match as regular file
+  // exact match as regular file
   if (does_path_exist(resolved_path) && is_regular_file(resolved_path)) {
     return clean_path(resolved_path);
   }
 
-  // Try adding ".html"
+  // try adding ".html"
   size_t len = strlen(resolved_path);
   if (len + 5 < sizeof(resolved_path)) {
     strcat(resolved_path, ".html");
@@ -176,7 +170,7 @@ char *resolve_path(char *request_path) {
     resolved_path[len] = '\0'; // revert
   }
 
-  // Try as directory + index.html
+  // try as directory + index.html
   if (does_path_exist(resolved_path) && is_directory(resolved_path)) {
     if (strlen(resolved_path) + strlen("/index.html") < sizeof(resolved_path)) {
       strcat(resolved_path, "/index.html");

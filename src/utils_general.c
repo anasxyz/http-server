@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Helper: safe formatted string allocation (like asprintf)
+// safe formatted string allocation (like asprintf)
 char *strdup_printf(char *fmt, ...) {
   va_list args;
   va_start(args, fmt);

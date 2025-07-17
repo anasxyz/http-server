@@ -9,10 +9,10 @@ bool match_prefix(const char *path, const char *prefix) {
     size_t len = strlen(prefix);
     if (strncmp(path, prefix, len) != 0) return false;
 
-    // If prefix ends in slash, match everything under it
+    // if prefix ends in slash, match everything under it
     if (prefix[len - 1] == '/') return true;
 
-    // Else ensure it’s an exact word boundary
+    // else ensure it’s an exact word boundary
     return path[len] == '\0' || path[len] == '/';
 }
 
