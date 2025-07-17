@@ -9,5 +9,6 @@ extern Route *routes;
 extern size_t num_routes;
 
 void load_config(const char *filename);
+void free_config();
 
 #endif /* config_h */

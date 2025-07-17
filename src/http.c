@@ -148,15 +148,17 @@ HttpResponse *handle_post(HttpRequest *req, void *ctx) {
 void handle_request(int socket, char *request_buffer) {
   HttpRequest request = parse_request(request_buffer);
   if (!request.method || !request.path || !request.version) {
-    HttpResponse *resp = create_response(400, request.path);
-    if (resp) {
-      send_response(socket, resp);
-      free(resp);
+    HttpResponse *response = create_response(400, request.path);
+    if (response) {
+      send_response(socket, response);
+      free_response(response);
     }
     return;
   }
 
-  Route *matched = match_route(clean_path(request.path));
+  char *cleaned_path = clean_path(request.path);
+  Route *matched = match_route(cleaned_path);
+  free(cleaned_path);
 
   // define supported methods and their handlers
   MethodHandler handlers[] = {
@@ -177,10 +179,10 @@ void handle_request(int socket, char *request_buffer) {
   // if no handler found for method
   if (!response) {
     response = create_response(405, NULL); // Method Not Allowed
-  }
-
-  if (response) {
     send_response(socket, response);
-    free(response);
+    free_response(response);
+  } else {
+    send_response(socket, response);
+    free_response(response);
   }
 }

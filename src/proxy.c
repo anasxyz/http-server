@@ -21,7 +21,7 @@ HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
   struct sockaddr_in backend_addr;
   memset(&backend_addr, 0, sizeof(backend_addr));
   backend_addr.sin_family = AF_INET;           // IPv4
-  backend_addr.sin_port = htons(port); // set port
+  backend_addr.sin_port = htons(port);         // set port
 
   // convert backend address to network byte order
   if (inet_pton(AF_INET, host, &backend_addr.sin_addr) <= 0) {
@@ -75,6 +75,10 @@ HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
 
   size_t status_line_len = status_line_end - response_buffer;
   char *status_line = strndup(response_buffer, status_line_len); // copy just status line
+  if (!status_line) {
+    perror("Failed to allocate status_line");
+    return NULL;
+  }
 
   // find start of body (after \r\n\r\n)
   char *body_start = strstr(response_buffer, "\r\n\r\n");
@@ -98,34 +102,67 @@ HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
   body[body_len] = '\0';
 
   // look for content type header
-  const char *content_type = "text/plain"; // just fallback
+  char *content_type = strdup("text/plain"); // fallback default
+  if (!content_type) {
+    perror("Failed to allocate content_type");
+    free(status_line);
+    free(body);
+    return NULL;
+  }
+
   char *ct_start = strcasestr(response_buffer, "Content-Type:");
   if (ct_start) {
     ct_start += strlen("Content-Type:");
-    while (*ct_start == ' ')
-      ct_start++; // skip whitespace
+    while (*ct_start == ' ') ct_start++; // skip whitespace
     char *ct_end = strstr(ct_start, "\r\n");
     if (ct_end) {
       size_t ct_len = ct_end - ct_start;
-      char *ct = malloc(ct_len + 1);
-      strncpy(ct, ct_start, ct_len);
-      ct[ct_len] = '\0';
-      content_type = ct;
+      char *new_ct = malloc(ct_len + 1);
+      if (new_ct) {
+        strncpy(new_ct, ct_start, ct_len);
+        new_ct[ct_len] = '\0';
+
+        free(content_type);
+        content_type = new_ct;
+      }
+      // else just keep default "text/plain"
     }
   }
 
   // finally build response struct to return to handle_request()
   HttpResponse *response = malloc(sizeof(HttpResponse));
+  if (!response) {
+    perror("Failed to allocate HttpResponse");
+    free(status_line);
+    free(body);
+    free(content_type);
+    return NULL;
+  }
+
   response->status = status_line;
   response->body = body;
   response->body_length = body_len;
-  response->content_type = strdup(content_type);
+  response->content_type = content_type;
   response->connection = strdup("close");
   response->date = strdup("Thu, 01 Jan 1970 00:00:00 GMT");
   response->last_modified = strdup("Thu, 01 Jan 1970 00:00:00 GMT");
   response->server = strdup("http-server");
   response->headers = NULL;
   response->num_headers = 0;
+
+  // check strdup results for critical fields, free all on failure
+  if (!response->connection || !response->date || !response->last_modified || !response->server) {
+    perror("Failed to allocate response headers");
+    free(response->status);
+    free(response->body);
+    free(response->content_type);
+    free(response->connection);
+    free(response->date);
+    free(response->last_modified);
+    free(response->server);
+    free(response);
+    return NULL;
+  }
 
   return response;
 }

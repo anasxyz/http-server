@@ -48,7 +48,7 @@ bool is_directory(char *path) {
 }
 
 // this took ridiuculously long to figure out
-// anytime this is called it should be freed by the caller
+// must be freed by the caller
 char *clean_path(char *path) {
   if (!path)
     return NULL;
@@ -183,6 +183,7 @@ char *resolve_path(char *request_path) {
   return NULL;
 }
 
+// must be freed by caller because resolved_path uses clean_path inside it
 char *path_pipeline(char *path) {
   char *cleaned_path = clean_path(path);
   char *full_path = get_full_path(cleaned_path);
@@ -191,6 +192,8 @@ char *path_pipeline(char *path) {
   printf("cleaned path: %s\n", cleaned_path);
   printf("full path: %s\n", full_path);
   printf("resolved path: %s\n", resolved_path);
+
+  free(cleaned_path);
 
   return resolved_path;
 }

@@ -19,12 +19,4 @@ typedef struct {
   void *context;  // for passing route info or other data
 } MethodHandler;
 
-#define FALLBACK_500                                                           \
-  "<html><head><title>500 Internal Server Error</title></head><body><h1>500 "  \
-  "Internal Server Error</h1></body></html>"
-
-#define FALLBACK_404                                                           \
-  "<html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1>" \
-  "</body></html>"
-
 #endif /* http_h */

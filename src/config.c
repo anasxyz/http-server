@@ -7,7 +7,7 @@
 
 // default values
 int SERVER_PORT;
-char *WEB_ROOT = "";
+char *WEB_ROOT = NULL;
 Route *routes = NULL;
 size_t num_routes = 0;
 
@@ -99,6 +99,9 @@ void load_config(const char *filename) {
       routes[num_routes].port = port;
       routes[num_routes].backend_path = backend_path;
       num_routes++;
+
+      // free memory
+      free(prefix);
     }
   }
 
@@ -117,4 +120,21 @@ void load_config(const char *filename) {
     printf("    backend_path = '%s'\n", routes[i].backend_path);
   }
   printf("=====================\n");
+}
+
+void free_config() {
+  if (WEB_ROOT) {
+    free(WEB_ROOT);
+    WEB_ROOT = NULL;
+  }
+
+  for (size_t i = 0; i < num_routes; i++) {
+    free(routes[i].prefix);
+    free(routes[i].host);
+    free(routes[i].backend_path);
+  }
+
+  free(routes);
+  routes = NULL;
+  num_routes = 0;
 }

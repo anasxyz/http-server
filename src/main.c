@@ -43,4 +43,6 @@ int main() {
   struct Server server = server_constructor(AF_INET, SOCK_STREAM, 0, INADDR_ANY, SERVER_PORT, 10, launch);
 
   server.launch(&server);
+
+  free_config();
 }
