@@ -4,9 +4,7 @@
 #include "route.h"
 
 extern int SERVER_PORT;
-
 extern char* WEB_ROOT;
-
 extern Route *routes;
 extern size_t num_routes;
 

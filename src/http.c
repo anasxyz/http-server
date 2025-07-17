@@ -47,12 +47,21 @@ HttpResponse *create_response(int status_code, char *path) {
     status_code = 500;
   }
 
-  // If file loading failed, fallback to simple HTML message
+  // if file loading failed, fallback to simple HTML message
   if (!body) {
-    const char *reason = get_status_reason(status_code);
-    body = strdup_printf("<h1>%d %s</h1>", status_code, reason);
-    body_length = strlen(body);
-    content_type = "text/html";
+    char fallback_path[PATH_MAX];
+    snprintf(fallback_path, sizeof(fallback_path), "%s/%d.html", WEB_ROOT, status_code);
+    FILE *fallback_file = get_file(fallback_path);
+
+    if (fallback_file) {
+      body = read_file(fallback_file, &body_length);
+      content_type = get_mime_type(fallback_path);
+    } else {
+      const char *reason = get_status_reason(status_code);
+      body = strdup_printf("<h1>%d %s</h1>", status_code, reason);
+      body_length = strlen(body);
+      content_type = "text/html";
+    }
   }
 
   response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
