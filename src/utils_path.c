@@ -60,15 +60,22 @@ char *clean_path(char *path) {
   if (len == 0)
     return strdup(".");
 
+  bool had_leading_slash = (path[0] == '/');
   bool had_trailing_slash = (path[len - 1] == '/');
 
-  // Allocate room for components
+  // Allocate for component stack
   char **stack = malloc(sizeof(char *) * (len + 1));
-  char *path_copy = strdup(path);
-  char *token;
-  size_t stack_size = 0;
+  if (!stack) return NULL;
 
-  token = strtok(path_copy, "/");
+  char *path_copy = strdup(path);
+  if (!path_copy) {
+    free(stack);
+    return NULL;
+  }
+
+  size_t stack_size = 0;
+  char *token = strtok(path_copy, "/");
+
   while (token != NULL) {
     if (strcmp(token, "..") == 0) {
       if (stack_size > 0) {
@@ -80,9 +87,19 @@ char *clean_path(char *path) {
     token = strtok(NULL, "/");
   }
 
-  char *cleaned = malloc(len + 2);
-  if (!cleaned) return NULL;
+  // Estimate cleaned path size
+  size_t cleaned_len = 2 + len;  // generous size
+  char *cleaned = malloc(cleaned_len);
+  if (!cleaned) {
+    free(stack);
+    free(path_copy);
+    return NULL;
+  }
+
   cleaned[0] = '\0';
+
+  if (had_leading_slash)
+    strcat(cleaned, "/");
 
   for (size_t i = 0; i < stack_size; ++i) {
     strcat(cleaned, stack[i]);
@@ -91,12 +108,14 @@ char *clean_path(char *path) {
     }
   }
 
-  // Add single trailing slash back if it was present in original
-  if (had_trailing_slash && strlen(cleaned) > 0 && cleaned[strlen(cleaned) - 1] != '/') {
-    strcat(cleaned, "/");
+  if (had_trailing_slash && (stack_size > 0 || had_leading_slash)) {
+    size_t clen = strlen(cleaned);
+    if (clen == 0 || cleaned[clen - 1] != '/') {
+      strcat(cleaned, "/");
+    }
   }
 
-  // Handle empty path
+  // If empty, default to "."
   if (strlen(cleaned) == 0) {
     strcpy(cleaned, ".");
   }

@@ -6,9 +6,10 @@
 #include <stddef.h>
 
 typedef struct {
-  char *prefix;
-  char *host;
-  int port;
+  char *prefix; // /api/
+  char *host; // 127.0.0.1
+  int port; // 5050
+  char* backend_path; // /page/
 } Route;
 
 Route* match_route(char *path);

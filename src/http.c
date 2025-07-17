@@ -160,6 +160,21 @@ void send_response(int socket, HttpResponse *response) {
   printf("\n");
 }
 
+char *normalise_path(const char *path) {
+  char *normalized = malloc(strlen(path) + 1);
+  if (!normalized) return NULL;
+
+  char prev = 0;
+  char *dst = normalized;
+  for (const char *src = path; *src; ++src) {
+    if (*src == '/' && prev == '/') continue;
+    *dst++ = *src;
+    prev = *src;
+  }
+  *dst = '\0';
+  return normalized;
+}
+
 // handles HTTP request
 void handle_request(int socket, char *request_buffer) {
   HttpResponse *response;
@@ -179,17 +194,30 @@ void handle_request(int socket, char *request_buffer) {
   }
 
   // choose static or dynamic response based on request
-  Route *matched = match_route(request.path);
+  Route *matched = match_route(clean_path(request.path));
 
   if (matched) {
     char *trimmed_path = trim_prefix(request.path, matched->prefix);
 
-    request.path = trimmed_path;
+    // Combine matched->backend_path and trimmed_path
+    // Ensure proper slashes: avoid "//" or missing "/"
+    char full_backend_path[1024];
+    snprintf(full_backend_path, sizeof(full_backend_path), "%s/%s",
+             matched->backend_path, trimmed_path);
 
-    printf("Matched route: prefix=%s, host=%s, port=%d, trimmed path=%s\n",
-           matched->prefix, matched->host, matched->port, request.path);
+    char *normalised_path = clean_path(full_backend_path);
+
+    request.path = normalised_path;
+
+    printf("Matched route: prefix=%s, host=%s, port=%d, backend path=%s, final "
+           "path=%s\n",
+           matched->prefix, matched->host, matched->port, matched->backend_path,
+           request.path);
 
     response = proxy_to_backend(request, matched->host, matched->port);
+
+    free(trimmed_path);
+    free(normalised_path);
   } else {
     response = create_response(200, request.path); // static
   }
@@ -200,3 +228,5 @@ void handle_request(int socket, char *request_buffer) {
   send_response(socket, response);
   free(response);
 }
+
+
