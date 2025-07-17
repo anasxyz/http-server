@@ -7,10 +7,12 @@
 
 bool match_prefix(const char *path, const char *prefix) {
     size_t len = strlen(prefix);
-    if (strncmp(path, prefix, len) != 0) {
-        return false;
-    }
+    if (strncmp(path, prefix, len) != 0) return false;
 
+    // If prefix ends in slash, match everything under it
+    if (prefix[len - 1] == '/') return true;
+
+    // Else ensure it’s an exact word boundary
     return path[len] == '\0' || path[len] == '/';
 }
 
@@ -29,8 +31,17 @@ char *trim_prefix(const char *path, const char *prefix) {
         if (path[prefix_len] == '\0') {
             return strdup("/");
         }
-        return strdup(path + prefix_len);
+
+        // Ensure leading slash
+        size_t trimmed_len = strlen(path + prefix_len);
+        char *result = malloc(trimmed_len + 2); // +1 for '/', +1 for '\0'
+        if (!result) return NULL;
+
+        result[0] = '/';
+        strcpy(result + 1, path + prefix_len);
+        return result;
     }
+
     return strdup(path);
 }
 
