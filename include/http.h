@@ -7,10 +7,17 @@
 #include <stdbool.h>
 
 HttpResponse *create_response(int status_code, char *path);
-HttpResponse *create_dynamic_response(int status_code, const char *content_type, char *body, size_t body_length);
 
 void send_response(int socket, HttpResponse *response);
 void handle_request(int socket, char *request);
+
+typedef HttpResponse *(*RequestHandler)(HttpRequest *, void *context);
+
+typedef struct {
+  const char *method;
+  RequestHandler handler;
+  void *context;  // for passing route info or other data
+} MethodHandler;
 
 #define FALLBACK_500                                                           \
   "<html><head><title>500 Internal Server Error</title></head><body><h1>500 "  \

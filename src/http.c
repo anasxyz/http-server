@@ -105,56 +105,70 @@ void send_response(int socket, HttpResponse *response) {
   printf("\n");
 }
 
-// handles HTTP request
-void handle_request(int socket, char *request_buffer) {
-  HttpResponse *response;
-
-  // parse request
-  HttpRequest request = parse_request(request_buffer);
-
-  // check if request is valid
-  if (!request.method || !request.path || !request.version) {
-    response = create_response(400, request.path);
-    if (!response) {
-      return;
-    }
-    send_response(socket, response);
-    free(response);
-    return;
-  }
-
-  // choose static or dynamic response based on request
-  Route *matched = match_route(clean_path(request.path));
-
+HttpResponse *handle_get(HttpRequest *request, void *context) {
+  Route *matched = (Route *)context;
   if (matched) {
-    char *trimmed_path = trim_prefix(request.path, matched->prefix);
-
-    // combine matched->backend_path and trimmed_path
-    // avoid "//" or missing "/"
+    char *trimmed_path = trim_prefix(request->path, matched->prefix);
     char full_backend_path[1024];
     snprintf(full_backend_path, sizeof(full_backend_path), "%s/%s",
              matched->backend_path, trimmed_path);
-
     char *normalised_path = clean_path(full_backend_path);
+    request->path = normalised_path;
 
-    request.path = normalised_path;
+    printf("Proxying GET: matched route prefix=%s, backend=%s:%d, path=%s\n",
+           matched->prefix, matched->host, matched->port, request->path);
 
-    printf("Matched route: prefix=%s, host=%s, port=%d, backend path=%s, final "
-           "path=%s\n",
-           matched->prefix, matched->host, matched->port, matched->backend_path,
-           request.path);
-
-    response = proxy_to_backend(request, matched->host, matched->port);
-
+    HttpResponse *response = proxy_to_backend(*request, matched->host, matched->port);
     free(trimmed_path);
     free(normalised_path);
+    return response;
   } else {
-    response = create_response(200, request.path); // static
+    return create_response(200, request->path);  // static file fallback
   }
+}
 
-  if (!response) {
+HttpResponse *handle_post(HttpRequest *req, void *ctx) {
+  // TODO: implement POST handling basically proxy POST or process form submissions
+  // respond with 501 Not Implemented for now
+  return create_response(501, "/501.html");
+}
+
+void handle_request(int socket, char *request_buffer) {
+  HttpRequest request = parse_request(request_buffer);
+  if (!request.method || !request.path || !request.version) {
+    HttpResponse *resp = create_response(400, request.path);
+    if (resp) {
+      send_response(socket, resp);
+      free(resp);
+    }
     return;
   }
-  send_response(socket, response);
-  free(response);
+
+  Route *matched = match_route(clean_path(request.path));
+
+  // define supported methods and their handlers
+  MethodHandler handlers[] = {
+      {"GET", handle_get, matched},
+      {"POST", handle_post, matched},
+  };
+
+  HttpResponse *response = NULL;
+  size_t num_handlers = sizeof(handlers) / sizeof(handlers[0]);
+
+  for (size_t i = 0; i < num_handlers; i++) {
+    if (strcmp(request.method, handlers[i].method) == 0) {
+      response = handlers[i].handler(&request, handlers[i].context);
+      break;
+    }
+  }
+
+  // if no handler found for method
+  if (!response) {
+    response = create_response(405, "/405.html"); // Method Not Allowed
+  }
+
+  if (response) {
+    send_response(socket, response);
+    free(response);
+  }
 }
