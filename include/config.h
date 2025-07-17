@@ -9,7 +9,9 @@ extern int BACKEND_PORT;
 
 extern const char* WEB_ROOT;
 
-extern Route routes[];
-extern const size_t num_routes;
+extern Route *routes;
+extern size_t num_routes;
+
+void load_config(const char *filename);
 
 #endif /* config_h */

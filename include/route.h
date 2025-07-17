@@ -12,6 +12,7 @@ typedef struct {
 } Route;
 
 Route* match_route(char *path);
+bool match_prefix(const char *path, const char *prefix);
 char *trim_prefix(const char *path, const char *prefix);
 
 #endif /* route_h */
