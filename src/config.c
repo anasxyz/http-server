@@ -5,7 +5,8 @@
 
 #include "../include/utils_path.h"
 
-int SERVER_PORT = 8080;
+// default values
+int SERVER_PORT;
 char *WEB_ROOT = "";
 Route *routes = NULL;
 size_t num_routes = 0;
@@ -37,7 +38,7 @@ void load_config(const char *filename) {
     if (strcmp(key, "PORT") == 0) {
       SERVER_PORT = atoi(value);
     } else if (strcmp(key, "ROOT") == 0) {
-      WEB_ROOT = strdup(value);
+      WEB_ROOT = clean_path(value);
     } else if (strcmp(key, "ROUTE") == 0) {
       char *prefix = strtok(value, ",");
       char *host = strtok(NULL, ",");
@@ -66,7 +67,7 @@ void load_config(const char *filename) {
 
   printf("=== Loaded Config ===\n");
   printf("PORT = %d\n", SERVER_PORT);
-  printf("ROOT = %s\n", clean_path(WEB_ROOT));
+  printf("ROOT = %s\n", WEB_ROOT);
   printf("Routes (%zu):\n", num_routes);
   for (size_t i = 0; i < num_routes; i++) {
     printf("  Route %zu: prefix='%s', host='%s', port=%d\n", i + 1,

@@ -133,7 +133,7 @@ char *resolve_path(char *request_path) {
       if (strlen(resolved_path) + strlen("index.html") < sizeof(resolved_path)) {
         strcat(resolved_path, "index.html");
         if (does_path_exist(resolved_path) && is_regular_file(resolved_path)) {
-          return resolved_path;
+          return clean_path(resolved_path);
         }
       }
     }
@@ -144,7 +144,7 @@ char *resolve_path(char *request_path) {
 
   // Exact match as regular file
   if (does_path_exist(resolved_path) && is_regular_file(resolved_path)) {
-    return resolved_path;
+    return clean_path(resolved_path);
   }
 
   // Try adding ".html"
@@ -152,7 +152,7 @@ char *resolve_path(char *request_path) {
   if (len + 5 < sizeof(resolved_path)) {
     strcat(resolved_path, ".html");
     if (does_path_exist(resolved_path) && is_regular_file(resolved_path)) {
-      return resolved_path;
+      return clean_path(resolved_path);
     }
     resolved_path[len] = '\0'; // revert
   }
@@ -162,7 +162,7 @@ char *resolve_path(char *request_path) {
     if (strlen(resolved_path) + strlen("/index.html") < sizeof(resolved_path)) {
       strcat(resolved_path, "/index.html");
       if (does_path_exist(resolved_path) && is_regular_file(resolved_path)) {
-        return resolved_path;
+        return clean_path(resolved_path);
       }
     }
   }
@@ -174,6 +174,10 @@ char *path_pipeline(char *path) {
   char *cleaned_path = clean_path(path);
   char *full_path = get_full_path(cleaned_path);
   char *resolved_path = resolve_path(full_path);
+
+  printf("cleaned path: %s\n", cleaned_path);
+  printf("full path: %s\n", full_path);
+  printf("resolved path: %s\n", resolved_path);
 
   return resolved_path;
 }
