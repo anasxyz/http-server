@@ -9,7 +9,6 @@ typedef struct {
   char *prefix;
   char *host;
   int port;
-  bool trim_prefix;
 } Route;
 
 Route* match_route(char *path);
