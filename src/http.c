@@ -25,55 +25,52 @@ HttpResponse *create_response(int status_code, char *path) {
     return NULL;
   }
 
-  char *prepared_path = path_pipeline(path);
   char *body = NULL;
   size_t body_length = 0;
-  FILE *file = get_file(prepared_path);
+  char *content_type = NULL;
+  char* prepared_path = NULL;
 
-  if (!file) {
-    free(prepared_path);
-    prepared_path = strdup_printf("%s/404.html", WEB_ROOT);
-    file = get_file(prepared_path);
-
-    if (!file) {
-      // fallback 500
-      status_code = 500;
-      body = FALLBACK_500;
-      body_length = strlen(body);
-    } else {
-      body = read_file(file, &body_length);
-      if (!body) {
-        // fallback 500
+  if (path) {
+    prepared_path = path_pipeline(path);
+    if (prepared_path) {
+      FILE *file = get_file(prepared_path);
+      content_type = get_mime_type(prepared_path);
+      if (file) {
+        body = read_file(file, &body_length);
+      } else {
         status_code = 500;
-        body = FALLBACK_500;
-        body_length = strlen(body);
       }
+    } else {
+      status_code = 404;
     }
   } else {
-    body = read_file(file, &body_length);
-    if (!body) {
-      // fallback 500
-      status_code = 500;
-      body = FALLBACK_500;
-      body_length = strlen(body);
-    }
+    status_code = 500;
   }
 
-  response->status = strdup_printf("HTTP/1.1 %d %s", status_code,
-                                   get_status_reason(status_code));
+  // If file loading failed, fallback to simple HTML message
+  if (!body) {
+    const char *reason = get_status_reason(status_code);
+    body = strdup_printf("<h1>%d %s</h1>", status_code, reason);
+    body_length = strlen(body);
+    content_type = "text/html";
+  }
+
+  response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
   response->body = body;
   response->body_length = body_length;
-  response->content_type = get_mime_type(prepared_path);
+  response->content_type = content_type;
   response->connection = "close";
   response->date = http_date_now();
-  response->last_modified = http_last_modified(prepared_path);
+  response->last_modified = http_last_modified(prepared_path ? prepared_path : path);
   if (!response->last_modified)
-    response->last_modified = strdup(response->date); // fallback to now
+    response->last_modified = strdup(response->date); // fallback
   response->server = "http-server";
   response->headers = NULL;
   response->num_headers = 0;
 
-  free(prepared_path);
+  if (prepared_path)
+    free(prepared_path);
+
   return response;
 }
 
@@ -123,7 +120,7 @@ HttpResponse *handle_get(HttpRequest *request, void *context) {
     HttpResponse *response =
         proxy_to_backend(*request, matched->host, matched->port);
     if (!response) {
-      return create_response(500, "/500.html");
+      return create_response(500, NULL);
     }
     free(trimmed_path);
     free(normalised_path);
@@ -136,7 +133,7 @@ HttpResponse *handle_get(HttpRequest *request, void *context) {
 HttpResponse *handle_post(HttpRequest *req, void *ctx) {
   // TODO: implement POST handling basically proxy POST or process form
   // submissions respond with 501 Not Implemented for now
-  return create_response(501, "/501.html");
+  return create_response(501, NULL);
 }
 
 void handle_request(int socket, char *request_buffer) {
@@ -170,7 +167,7 @@ void handle_request(int socket, char *request_buffer) {
 
   // if no handler found for method
   if (!response) {
-    response = create_response(405, "/405.html"); // Method Not Allowed
+    response = create_response(405, NULL); // Method Not Allowed
   }
 
   if (response) {
