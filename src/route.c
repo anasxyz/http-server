@@ -1,20 +1,9 @@
-/*
- * NOT NEEDED FOR NOW
- *
- */
-
 #include <stdlib.h>
 #include <string.h>
 
+#include "../include/config.h"
+
 #include "../include/route.h"
-#include "../include/proxy.h"
-
-Route routes[] = {
-  { "/api/status", BACKEND_HOST, BACKEND_PORT },
-  { "/api/files", BACKEND_HOST, BACKEND_PORT },
-};
-
-const size_t num_routes = sizeof(routes) / sizeof(Route);
 
 bool match_prefix(const char *path, const char *prefix) {
     size_t len = strlen(prefix);

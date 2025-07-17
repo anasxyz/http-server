@@ -8,6 +8,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "../include/config.h"
+
 #include "../include/file_handler.h"
 #include "../include/http.h"
 #include "../include/proxy.h"

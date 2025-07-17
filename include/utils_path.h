@@ -1,8 +1,6 @@
 #ifndef utils_path_h
 #define utils_path_h
 
-#define WEB_ROOT "www"
-
 char *get_mime_type(const char *path);
 bool does_path_exist(char *path);
 bool is_regular_file(char *path);
