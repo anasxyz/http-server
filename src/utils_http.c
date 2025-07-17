@@ -1,6 +1,8 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
 
 #include "../include/utils_http.h"
 
@@ -70,15 +72,6 @@ HttpRequest parse_request(char *request_buffer) {
   return request;
 }
 
-bool is_method_allowed(const char* method) {
-  for (size_t i = 0; i < NUM_ALLOWED_METHODS; ++i) {
-    if (strcmp(method, allowed_methods[i].method) == 0 && allowed_methods[i].allowed) {
-      return allowed_methods[i].allowed;
-    }
-  }
-  return false;
-}
-
 void free_response(HttpResponse *response) {
   if (!response) return;
 
@@ -91,4 +84,24 @@ void free_response(HttpResponse *response) {
   if (response->server) free(response->server);
 
   free(response);
+}
+
+char *http_date_now() {
+  time_t now = time(NULL);
+  struct tm *tm = gmtime(&now);
+  char *buf = malloc(30);
+  if (!buf) return NULL;
+  strftime(buf, 30, "%a, %d %b %Y %H:%M:%S GMT", tm);
+  return buf;
+}
+
+char *http_last_modified(const char *path) {
+  struct stat st;
+  if (stat(path, &st) < 0) return NULL;
+
+  struct tm *tm = gmtime(&st.st_mtime);
+  char *buf = malloc(30);
+  if (!buf) return NULL;
+  strftime(buf, 30, "%a, %d %b %Y %H:%M:%S GMT", tm);
+  return buf;
 }

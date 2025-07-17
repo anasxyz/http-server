@@ -9,20 +9,6 @@ typedef struct {
   bool allowed;
 } HttpMethod;
 
-static const HttpMethod allowed_methods[] = {
-  {"GET", true},
-  {"POST", false},
-  {"PUT", false},
-  {"DELETE", false},
-  {"PATCH", false},
-  {"HEAD", false},
-  {"OPTIONS", false},
-  {"CONNECT", false},
-  {"TRACE", false},
-};
-
-#define NUM_ALLOWED_METHODS (sizeof(allowed_methods) / sizeof(allowed_methods[0]))
-
 typedef struct {
   char *key;
   char *value;
@@ -65,5 +51,8 @@ char *get_status_reason(int code);
 bool is_method_allowed(const char* method);
 HttpRequest parse_request(char *request_buffer);
 void free_response(HttpResponse *response);
+
+char *http_date_now();
+char *http_last_modified(const char *path);
 
 #endif /* utils_http_h */

@@ -65,8 +65,10 @@ HttpResponse *create_response(int status_code, char *path) {
   response->body_length = body_length;
   response->content_type = get_mime_type(prepared_path);
   response->connection = "close";
-  response->date = "Thu, 01 Jan 1970 00:00:00 GMT";
-  response->last_modified = "Thu, 01 Jan 1970 00:00:00 GMT";
+  response->date = http_date_now();
+  response->last_modified = http_last_modified(prepared_path);
+  if (!response->last_modified)
+    response->last_modified = strdup(response->date); // fallback to now
   response->server = "http-server";
   response->headers = NULL;
   response->num_headers = 0;
@@ -118,18 +120,22 @@ HttpResponse *handle_get(HttpRequest *request, void *context) {
     printf("Proxying GET: matched route prefix=%s, backend=%s:%d, path=%s\n",
            matched->prefix, matched->host, matched->port, request->path);
 
-    HttpResponse *response = proxy_to_backend(*request, matched->host, matched->port);
+    HttpResponse *response =
+        proxy_to_backend(*request, matched->host, matched->port);
+    if (!response) {
+      return create_response(500, "/500.html");
+    }
     free(trimmed_path);
     free(normalised_path);
     return response;
   } else {
-    return create_response(200, request->path);  // static file fallback
+    return create_response(200, request->path); // static file fallback
   }
 }
 
 HttpResponse *handle_post(HttpRequest *req, void *ctx) {
-  // TODO: implement POST handling basically proxy POST or process form submissions
-  // respond with 501 Not Implemented for now
+  // TODO: implement POST handling basically proxy POST or process form
+  // submissions respond with 501 Not Implemented for now
   return create_response(501, "/501.html");
 }
 
