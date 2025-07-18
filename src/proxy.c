@@ -10,35 +10,29 @@
 #include "../include/utils_http.h"
 
 HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
-  // backend socket
   int backend_socket = socket(AF_INET, SOCK_STREAM, 0);
   if (backend_socket < 0) {
     perror("Failed to create backend socket");
     return NULL;
   }
 
-  // backend server address
   struct sockaddr_in backend_addr;
   memset(&backend_addr, 0, sizeof(backend_addr));
-  backend_addr.sin_family = AF_INET;           // IPv4
-  backend_addr.sin_port = htons(port);         // set port
+  backend_addr.sin_family = AF_INET;
+  backend_addr.sin_port = htons(port);
 
-  // convert backend address to network byte order
   if (inet_pton(AF_INET, host, &backend_addr.sin_addr) <= 0) {
     perror("Invalid backend address");
     close(backend_socket);
     return NULL;
   }
 
-  // try to connect
-  if (connect(backend_socket, (struct sockaddr *)&backend_addr,
-              sizeof(backend_addr)) < 0) {
+  if (connect(backend_socket, (struct sockaddr *)&backend_addr, sizeof(backend_addr)) < 0) {
     perror("Failed to connect to backend");
     close(backend_socket);
     return NULL;
   }
 
-  // build HTTP request to send to backend
   char request_buffer[2048];
   snprintf(request_buffer, sizeof(request_buffer),
            "%s %s HTTP/1.1\r\n"
@@ -47,24 +41,31 @@ HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
            "\r\n",
            request.method, request.path, host, port);
 
-  // send request to backend
   if (write(backend_socket, request_buffer, strlen(request_buffer)) < 0) {
     perror("Failed to write to backend");
     close(backend_socket);
     return NULL;
   }
 
-  // read response from backend into a buffer
+  // read backend response in a loop
   char response_buffer[8192];
-  ssize_t bytes_received =
-      read(backend_socket, response_buffer, sizeof(response_buffer) - 1);
+  size_t total_received = 0;
+  ssize_t bytes_received;
+
+  while ((bytes_received = read(backend_socket, response_buffer + total_received,
+                                sizeof(response_buffer) - total_received - 1)) > 0) {
+    total_received += bytes_received;
+    if (total_received >= sizeof(response_buffer) - 1) break;
+  }
+
   if (bytes_received < 0) {
     perror("Failed to read from backend");
     close(backend_socket);
     return NULL;
   }
-  response_buffer[bytes_received] = '\0'; // null terminate response buffer to use as string
-  close(backend_socket); // no longer need socket
+
+  response_buffer[total_received] = '\0';
+  close(backend_socket);
 
   // parse status line
   char *status_line_end = strstr(response_buffer, "\r\n");
@@ -74,35 +75,31 @@ HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
   }
 
   size_t status_line_len = status_line_end - response_buffer;
-  char *status_line = strndup(response_buffer, status_line_len); // copy just status line
+  char *status_line = strndup(response_buffer, status_line_len);
   if (!status_line) {
     perror("Failed to allocate status_line");
     return NULL;
   }
 
-  // find start of body (after \r\n\r\n)
   char *body_start = strstr(response_buffer, "\r\n\r\n");
   if (!body_start) {
     fprintf(stderr, "No body in backend response\n");
     free(status_line);
     return NULL;
   }
-  body_start += 4; // skip \r\n\r\n
-  
-  size_t body_len = bytes_received - (body_start - response_buffer);
+  body_start += 4;
 
-  // allocate memory to copy body into
+  size_t body_len = total_received - (body_start - response_buffer);
   char *body = malloc(body_len + 1);
   if (!body) {
-    perror("Failed to allocate memory for response body");
+    perror("Failed to allocate memory for body");
     free(status_line);
     return NULL;
   }
   memcpy(body, body_start, body_len);
   body[body_len] = '\0';
 
-  // look for content type header
-  char *content_type = strdup("text/plain"); // fallback default
+  char *content_type = strdup("text/plain"); // default
   if (!content_type) {
     perror("Failed to allocate content_type");
     free(status_line);
@@ -113,7 +110,7 @@ HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
   char *ct_start = strcasestr(response_buffer, "Content-Type:");
   if (ct_start) {
     ct_start += strlen("Content-Type:");
-    while (*ct_start == ' ') ct_start++; // skip whitespace
+    while (*ct_start == ' ') ct_start++;
     char *ct_end = strstr(ct_start, "\r\n");
     if (ct_end) {
       size_t ct_len = ct_end - ct_start;
@@ -121,15 +118,12 @@ HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
       if (new_ct) {
         strncpy(new_ct, ct_start, ct_len);
         new_ct[ct_len] = '\0';
-
         free(content_type);
         content_type = new_ct;
       }
-      // else just keep default "text/plain"
     }
   }
 
-  // finally build response struct to return to handle_request()
   HttpResponse *response = malloc(sizeof(HttpResponse));
   if (!response) {
     perror("Failed to allocate HttpResponse");
@@ -150,9 +144,8 @@ HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
   response->headers = NULL;
   response->num_headers = 0;
 
-  // check strdup results for critical fields, free all on failure
   if (!response->connection || !response->date || !response->last_modified || !response->server) {
-    perror("Failed to allocate response headers");
+    perror("Failed to allocate headers");
     free(response->status);
     free(response->body);
     free(response->content_type);
