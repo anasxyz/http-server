@@ -67,13 +67,13 @@ HttpResponse *create_response(int status_code, char *path) {
   response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
   response->body = body;
   response->body_length = body_length;
-  response->content_type = content_type;
-  response->connection = "close";
+  response->content_type = strdup(content_type);
+  response->connection = strdup("close");
   response->date = http_date_now();
   response->last_modified = http_last_modified(prepared_path ? prepared_path : path);
   if (!response->last_modified)
     response->last_modified = strdup(response->date); // fallback
-  response->server = "http-server";
+  response->server = strdup("http-server");
   response->headers = NULL;
   response->num_headers = 0;
 

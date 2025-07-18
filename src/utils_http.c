@@ -77,11 +77,11 @@ void free_response(HttpResponse *response) {
 
   if (response->status) free(response->status);
   if (response->body) free(response->body);
-  // if (response->content_type) free(response->content_type);
-  // if (response->connection) free(response->connection);
+  if (response->content_type) free(response->content_type);
+  if (response->connection) free(response->connection);
   if (response->date) free(response->date);
   if (response->last_modified) free(response->last_modified);
-  // if (response->server) free(response->server);
+  if (response->server) free(response->server);
 
   free(response);
 }
