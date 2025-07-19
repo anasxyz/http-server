@@ -29,7 +29,8 @@ void load_config(const char *filename) {
 
   while (fgets(line, sizeof(line), f)) {
     char *eq = strchr(line, '=');
-    if (!eq) continue;
+    if (!eq)
+      continue;
 
     *eq = '\0';
     char *key = line;
@@ -46,13 +47,15 @@ void load_config(const char *filename) {
     } else if (strcmp(key, "ROUTE") == 0) {
       // Expected format: /prefix/,URL=http://host[:port][/backend_path/]
       char *comma = strchr(value, ',');
-      if (!comma) continue;
+      if (!comma)
+        continue;
 
       *comma = '\0';
       char *prefix = clean_path(value);
       char *url_part = comma + 1;
 
-      if (strncmp(url_part, "URL=http://", 11) != 0) continue;
+      if (strncmp(url_part, "URL=http://", 11) != 0)
+        continue;
 
       char *url = url_part + 11; // After "http://"
       char *host_start = url;
@@ -109,15 +112,12 @@ void load_config(const char *filename) {
 
   // Debug print
   printf("=== Loaded Config ===\n");
-  printf("PORT = %d\n", SERVER_PORT);
-  printf("ROOT = %s\n", WEB_ROOT);
+  printf("PORT = %d | ROOT = %s\n", SERVER_PORT, WEB_ROOT);
   printf("Routes (%zu):\n", num_routes);
   for (size_t i = 0; i < num_routes; i++) {
-    printf("  Route %zu:\n", i + 1);
-    printf("    prefix       = '%s'\n", routes[i].prefix);
-    printf("    host         = '%s'\n", routes[i].host);
-    printf("    port         = %d\n", routes[i].port);
-    printf("    backend_path = '%s'\n", routes[i].backend_path);
+    printf("  [%zu] prefix='%s', host='%s', port=%d, backend_path='%s'\n",
+           i + 1, routes[i].prefix, routes[i].host, routes[i].port,
+           routes[i].backend_path);
   }
   printf("=====================\n");
 }

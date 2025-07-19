@@ -14,7 +14,9 @@ void *handle_client(void *arg) {
 
   read(client->socket, request_buffer, sizeof(request_buffer) - 1);
 
-  printf("Received request: %s\n", request_buffer);
+  printf("======== RECEIVED REQUEST ========\n");
+  printf("%s", request_buffer);
+  printf("=================================\n");
 
   handle_request(client->socket, request_buffer);
   close(client->socket);

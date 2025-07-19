@@ -17,7 +17,9 @@ void handle_sigint(int sig) {
 }
 
 void launch(struct Server *server) {
-  printf("===== WAITING FOR CONNECTION =====\n");
+  printf("======== SERVER STARTED ========\n");
+  printf("Server listening on http://localhost:%d\n", server->port);
+  printf("================================\n");
 
   // infinite loop accepting connections
   while (1) {

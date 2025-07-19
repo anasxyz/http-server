@@ -189,9 +189,11 @@ char *path_pipeline(char *path) {
   char *full_path = get_full_path(cleaned_path);
   char *resolved_path = resolve_path(full_path);
 
+  printf("======== PATH INFO ========\n");
   printf("cleaned path: %s\n", cleaned_path);
   printf("full path: %s\n", full_path);
   printf("resolved path: %s\n", resolved_path);
+  printf("===========================\n");
 
   free(cleaned_path);
 

@@ -102,7 +102,7 @@ void send_response(int socket, HttpResponse *response) {
   write(socket, header, strlen(header));
   write(socket, response->body, response->body_length);
 
-  printf("Sent response: \n");
+  printf("======== SENT RESPONSE ========\n");
   printf("Status: %s\n", response->status);
   printf("Date: %s\n", response->date);
   printf("Server: %s\n", response->server);
@@ -110,7 +110,7 @@ void send_response(int socket, HttpResponse *response) {
   printf("Content-Type: %s\n", response->content_type);
   printf("Content-Length: %lu\n", response->body_length);
   printf("Connection: %s\n", response->connection);
-  printf("\n");
+  printf("==============================\n");
 }
 
 HttpResponse *handle_get(HttpRequest *request, void *context) {
