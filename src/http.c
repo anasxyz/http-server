@@ -39,7 +39,7 @@ HttpResponse *create_response() {
   }
 
   // set body
-  response->body = strdup("<html><body><h1>Test body</h1></body></html>");
+  response->body = NULL;
 
   return response;
 }
@@ -90,27 +90,41 @@ char *serialise_response(HttpResponse *response, bool include_body) {
 }
 
 char* try_paths(const char* path) {
+  char* resolved = NULL;
   char* file_path = NULL;
-  
-  if (!path) {
-    return NULL;
-  }
 
-  if (realpath(path, NULL) && !is_dir(path)) {
-    return strdup(path);
-  }
+  if (!path) return NULL;
 
-  // Try path/index.html if it's a directory
-  if (realpath(path, NULL) && is_dir(path)) {
+  // 1. Direct file (not dir)
+  resolved = realpath(path, NULL);
+  if (resolved && !is_dir(path)) {
+    char* result = strdup(resolved);
+    free(resolved);
+    return result;
+  }
+  free(resolved);
+
+  // 2. path/index.html if it's a dir
+  resolved = realpath(path, NULL);
+  if (resolved && is_dir(path)) {
     file_path = join_paths(path, "index.html");
-    if (file_path && realpath(file_path, NULL)) {
-      return strdup(file_path);
+    free(resolved);
+
+    resolved = realpath(file_path, NULL);
+    if (resolved) {
+      char* result = strdup(resolved);
+      free(resolved);
+      free(file_path);
+      return result;
     }
+    free(resolved);
     free(file_path);
     file_path = NULL;
+  } else {
+    free(resolved);
   }
 
-  // Try path.html if it's a file without extension
+  // 3. path.html
   if (!is_dir(path)) {
     size_t len = strlen(path);
     file_path = malloc(len + 6); // ".html" + '\0'
@@ -119,14 +133,18 @@ char* try_paths(const char* path) {
     strcpy(file_path, path);
     strcat(file_path, ".html");
 
-    if (realpath(file_path, NULL)) {
-      return strdup(file_path);
+    resolved = realpath(file_path, NULL);
+    if (resolved) {
+      char* result = strdup(resolved);
+      free(resolved);
+      free(file_path);
+      return result;
     }
+    free(resolved);
     free(file_path);
-    file_path = NULL;
   }
 
-  return NULL; // nothing worked
+  return NULL;
 }
 
 void handle_request(int socket, char *request_buffer) {
@@ -136,9 +154,11 @@ void handle_request(int socket, char *request_buffer) {
   if (request) {
     HttpResponse *response = create_response();
     if (response) {
-      char* path = join_paths("/var/www/", request->request_line.path);
-      if (path) {
-        path = try_paths(path);
+      char* raw_path = join_paths("/var/www/", request->request_line.path);
+      char* path = NULL;
+      if (raw_path) {
+        path = try_paths(raw_path);
+        free(raw_path);
         if (!path) {
           // TODO: handle NULL path because path doesn't exist even after trying
           path = strdup("/var/www/404.html"); 
