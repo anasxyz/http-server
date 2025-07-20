@@ -10,6 +10,7 @@
 
 #include "../include/http.h"
 #include "../include/utils_http.h"
+#include "../include/file_handler.h"
 
 HttpResponse *create_response() {
   HttpResponse *response = malloc(sizeof(HttpResponse));
@@ -46,8 +47,6 @@ HttpResponse *create_response() {
 
   return response;
 }
-
-
 
 void send_response(int socket, HttpResponse *response) {
   // not yet
@@ -87,10 +86,22 @@ char *serialise_response(HttpResponse *response) {
   return buffer;
 }
 
+const char* get_body_from_file(char* path) {
+  char* body;
+  FILE* file = fopen(path, "rb");
+  size_t file_size;
+
+  body = read_file_to_buffer(file, &file_size);
+  fclose(file);
+
+  return body;
+}
+
 void handle_request(int socket, char *request_buffer) {
   HttpResponse *response = create_response();
   
   // get body from file here
+  response->body = get_body_from_file("/var/www/index.html");
 
   char *http_str = serialise_response(response);
   printf("====== RESPONSE SENT ======\n");
