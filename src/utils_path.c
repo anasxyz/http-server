@@ -46,23 +46,31 @@ char *get_mime_type(const char *path) {
   return "application/octet-stream"; // default MIME type for unknown extensions
 }
 
-char *join_paths(const char *root, const char *path, char *out,
-                 size_t out_size) {
+char *join_paths(const char *root, const char *path) {
+  if (!root || !path)
+    return NULL;
+
   size_t root_len = strlen(root);
   size_t path_len = strlen(path);
-  snprintf(out, out_size, "%s", root);
+
+  size_t total_len = root_len + path_len + 2; // possible '/' and '\0'
+  char *result = malloc(total_len);
+  if (!result)
+    return NULL;
+
+  strcpy(result, root);
 
   bool root_ends_slash = (root_len > 0 && root[root_len - 1] == '/');
   bool path_starts_slash = (path_len > 0 && path[0] == '/');
 
   if (root_ends_slash && path_starts_slash) {
-    strncat(out, path + 1, out_size - strlen(out) - 1);
+    strcat(result, path + 1);
   } else if (!root_ends_slash && !path_starts_slash) {
-    strncat(out, "/", out_size - strlen(out) - 1);
-    strncat(out, path, out_size - strlen(out) - 1);
+    strcat(result, "/");
+    strcat(result, path);
   } else {
-    strncat(out, path, out_size - strlen(out) - 1);
+    strcat(result, path);
   }
 
-  return out;
+  return result;
 }

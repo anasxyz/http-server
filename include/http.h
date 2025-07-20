@@ -10,13 +10,7 @@ HttpResponse *create_response();
 
 void send_response(int socket, HttpResponse *response);
 void handle_request(int socket, char *request);
-
-typedef HttpResponse *(*RequestHandler)(HttpRequest *, void *context);
-
-typedef struct {
-  const char *method;
-  RequestHandler handler;
-  void *context;  // for passing route info or other data
-} MethodHandler;
+HttpResponse *handle_get(HttpRequest *request, void *context);
+HttpResponse *handle_post(HttpRequest *request, void *context);
 
 #endif /* http_h */

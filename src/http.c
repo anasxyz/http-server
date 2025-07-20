@@ -8,9 +8,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "../include/config.h"
+#include "../include/utils_file.h"
+#include "../include/utils_path.h"
 #include "../include/http.h"
 #include "../include/utils_http.h"
-#include "../include/file_handler.h"
 
 HttpResponse *create_response() {
   HttpResponse *response = malloc(sizeof(HttpResponse));
@@ -24,14 +26,9 @@ HttpResponse *create_response() {
       strdup(get_status_reason(response->status_line.status_code));
 
   // set headers
-  Header headers[] = {
-    {"Date", ""},          
-    {"Server", ""},
-    {"Last-Modified", ""}, 
-    {"Content-Length", ""},
-    {"Content-Type", ""},  
-    {"Connection", ""}
-  };
+  Header headers[] = {{"Date", ""},          {"Server", ""},
+                      {"Last-Modified", ""}, {"Content-Length", ""},
+                      {"Content-Type", ""},  {"Connection", ""}};
 
   int header_count = sizeof(headers) / sizeof(Header);
   response->headers = malloc(sizeof(Header) * header_count);
@@ -43,7 +40,7 @@ HttpResponse *create_response() {
   }
 
   // set body
-  response->body = "<html><body><h1>Hello, World!</h1></body></html>";
+  response->body = strdup("<html><body><h1>Test body</h1></body></html>");
 
   return response;
 }
@@ -54,23 +51,30 @@ void send_response(int socket, HttpResponse *response) {
 
 HttpResponse *handle_get(HttpRequest *request, void *context) {
   // not yet
+  // return NULL;
 }
 
-HttpResponse *handle_post(HttpRequest *req, void *ctx) {
+HttpResponse *handle_post(HttpRequest *request, void *context) {
   // not yet
+  return NULL;
 }
 
-char *serialise_response(HttpResponse *response) {
+// serialise response to string.
+// include_body: whether to include the body in the response.
+char *serialise_response(HttpResponse *response, bool include_body) {
   // estimate maximum size
-  int size =
-      1024 + (response->header_count * 128) + (response->body ? strlen(response->body) : 0);
+  int size = 1024 + (response->header_count * 128);
+  if (include_body && response->body) {
+    size += strlen(response->body);
+  }
+
   char *buffer = malloc(size);
   if (!buffer)
     return NULL;
 
-  int offset =
-      snprintf(buffer, size, "%s %d %s\r\n", response->status_line.http_version,
-               response->status_line.status_code, response->status_line.status_reason);
+  int offset = snprintf(
+      buffer, size, "%s %d %s\r\n", response->status_line.http_version,
+      response->status_line.status_code, response->status_line.status_reason);
 
   for (int i = 0; i < response->header_count; i++) {
     offset += snprintf(buffer + offset, size - offset, "%s: %s\r\n",
@@ -79,35 +83,54 @@ char *serialise_response(HttpResponse *response) {
 
   offset += snprintf(buffer + offset, size - offset, "\r\n");
 
-  if (response->body) {
+  if (include_body && response->body) {
     snprintf(buffer + offset, size - offset, "%s", response->body);
   }
 
   return buffer;
 }
 
-const char* get_body_from_file(char* path) {
-  char* body;
-  FILE* file = fopen(path, "rb");
-  size_t file_size;
-
-  body = read_file_to_buffer(file, &file_size);
-  fclose(file);
-
-  return body;
-}
-
 void handle_request(int socket, char *request_buffer) {
-  HttpResponse *response = create_response();
-  
-  // get body from file here
-  response->body = get_body_from_file("/var/www/index.html");
+  char* http_str = NULL;
 
-  char *http_str = serialise_response(response);
-  printf("====== RESPONSE SENT ======\n");
-  printf("%s\n", http_str);
-  printf("===========================");
-  send(socket, http_str, strlen(http_str), 0);
+  HttpRequest *request = parse_request(request_buffer);
+  if (request) {
+    HttpResponse *response = create_response();
+    if (response) {
+      char* path = join_paths("/var/www/", request->request_line.path);
+      if (path) {
+        // get body from file here
+        response->body = get_body_from_file(path);
+        if (!response->body) {
+          // TODO: handle NULL body error
+          response->body = strdup("<html><body><h1>404 Not Found</h1></body></html>");
+        }
+
+        http_str = serialise_response(response, true);
+
+        printf("\n====== RESPONSE SENT ======\n");
+        printf("%s\n", http_str);
+        printf("===========================");
+
+        send(socket, http_str, strlen(http_str), 0);
+        
+        free(path);
+        free_request(request);
+        free_response(response);
+      } else {
+        // TODO: handle NULL path error
+        free_request(request);
+        free_response(response);
+      }
+    } else {
+      // TODO: handle NULL response error
+      free_request(request);
+    }
+  } else {
+    // TODO: handle NULL request error
+  }
+
+  if (http_str) free(http_str);
 }
 
 /*

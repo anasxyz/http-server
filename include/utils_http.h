@@ -31,6 +31,7 @@ typedef struct {
 typedef struct {
   HttpRequestLine request_line;
   Header *headers;
+  int header_count;
 } HttpRequest;
 
 typedef enum {
@@ -42,8 +43,19 @@ typedef enum {
 } HttpStatusCode;
 
 char *get_status_reason(int code);
-
 char *http_date_now();
 char *http_last_modified(const char *path);
+void trim_crlf(char *line);
+HttpRequest *parse_request(const char *raw_request);
+void free_response(HttpResponse *response);
+void free_request(HttpRequest *request);
+
+typedef HttpResponse *(*RequestHandler)(HttpRequest *, void *context);
+
+typedef struct {
+  const char *method;
+  RequestHandler handler;
+  void *context;  // for passing route info or other data
+} MethodHandler;
 
 #endif /* utils_http_h */

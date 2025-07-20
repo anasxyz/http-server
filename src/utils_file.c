@@ -5,7 +5,7 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#include "../include/file_handler.h"
+#include "../include/utils_file.h"
 
 // reads and serves requested file
 FILE* get_file(const char *path) {
@@ -67,4 +67,39 @@ char *read_file_to_buffer(FILE *fp, size_t *out_size) {
     if (out_size) *out_size = length;
     return buffer;
 }
+
+char *get_body_from_file(const char *filepath) {
+    FILE *file = fopen(filepath, "rb");
+    if (!file) {
+        perror("fopen failed");
+        return NULL;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long length = ftell(file);
+    rewind(file);
+
+    if (length < 0) {
+        fclose(file);
+        return NULL;
+    }
+
+    char *buffer = malloc(length + 1);
+    if (!buffer) {
+        fclose(file);
+        return NULL;
+    }
+
+    size_t read = fread(buffer, 1, length, file);
+    if (read != length) {
+        free(buffer);
+        fclose(file);
+        return NULL;
+    }
+
+    buffer[length] = '\0';
+    fclose(file);
+    return buffer;
+}
+
 
