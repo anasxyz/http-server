@@ -5,38 +5,32 @@
 #include <stddef.h>
 
 typedef struct {
-  const char* method;
-  bool allowed;
-} HttpMethod;
-
-typedef struct {
   char *key;
   char *value;
 } Header;
 
 typedef struct {
-  int code;
-  char *reason;
-} HttpStatus;
+  char* http_version;
+  int status_code;
+  char* status_reason;
+} HttpResponseStatusLine;
 
 typedef struct {
-  char *status;
-  char *date;
-  char *server;
-  char *last_modified;
-  char *content_type;
-  char *connection;
-
-  char *body;
-  size_t body_length;
+  HttpResponseStatusLine status_line;
   Header *headers;
-  size_t num_headers;
+  const char* body;
+  int header_count;
 } HttpResponse;
 
 typedef struct {
   char *method;
   char *path;
   char *version;
+} HttpRequestLine;
+
+typedef struct {
+  HttpRequestLine request_line;
+  Header *headers;
 } HttpRequest;
 
 typedef enum {
@@ -48,9 +42,6 @@ typedef enum {
 } HttpStatusCode;
 
 char *get_status_reason(int code);
-bool is_method_allowed(const char* method);
-HttpRequest parse_request(char *request_buffer);
-void free_response(HttpResponse *response);
 
 char *http_date_now();
 char *http_last_modified(const char *path);

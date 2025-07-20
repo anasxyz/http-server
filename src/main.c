@@ -12,7 +12,6 @@
 
 void handle_sigint(int sig) {
     printf("\nCaught SIGINT, cleaning up...\n");
-    free_config();
     exit(0);
 }
 
@@ -49,11 +48,11 @@ void launch(struct Server *server) {
 int main() {
   signal(SIGINT, handle_sigint);
 
-  load_config("server.conf");
+  // load_config("server.conf");
 
-  struct Server server = server_constructor(AF_INET, SOCK_STREAM, 0, INADDR_ANY, SERVER_PORT, 10, launch);
+  struct Server server = server_constructor(AF_INET, SOCK_STREAM, 0, INADDR_ANY, 8080, 10, launch);
 
   server.launch(&server);
 
-  free_config();
+  // free_config();
 }

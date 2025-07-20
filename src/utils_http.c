@@ -51,41 +51,6 @@ char* get_status_reason(int code) {
     }
 }
 
-HttpRequest parse_request(char *request_buffer) {
-  HttpRequest request = {
-      .method = NULL,
-      .path = NULL,
-      .version = NULL,
-  };
-
-  // extract request line
-  char *request_line = strtok(request_buffer, "\r\n");
-  if (request_line) {
-    request.method = strtok(request_line, " ");
-    request.path = strtok(NULL, " ");
-    request.version = strtok(NULL, " ");
-  }
-
-  // if request_line is NULL (extraction failed), HttpRequest fields stay NULL
-  // and then handle_request() can check for errors
-
-  return request;
-}
-
-void free_response(HttpResponse *response) {
-  if (!response) return;
-
-  if (response->status) free(response->status);
-  if (response->body) free(response->body);
-  if (response->content_type) free(response->content_type);
-  if (response->connection) free(response->connection);
-  if (response->date) free(response->date);
-  if (response->last_modified) free(response->last_modified);
-  if (response->server) free(response->server);
-
-  free(response);
-}
-
 char *http_date_now() {
   time_t now = time(NULL);
   struct tm *tm = gmtime(&now);

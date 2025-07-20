@@ -9,6 +9,7 @@
 #include "../include/proxy.h"
 #include "../include/utils_http.h"
 
+/*
 HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
   int backend_socket = socket(AF_INET, SOCK_STREAM, 0);
   if (backend_socket < 0) {
@@ -159,3 +160,4 @@ HttpResponse *proxy_to_backend(HttpRequest request, char *host, int port) {
 
   return response;
 }
+*/
