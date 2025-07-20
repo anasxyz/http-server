@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -fsanitize=address -g
+CFLAGS = -Wall -Wextra
 TARGET = server
 
 # Automatically find all .c files in the current directory

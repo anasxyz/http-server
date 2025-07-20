@@ -1,12 +1,10 @@
 #include <ctype.h>
 #include <stdbool.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 
-#include "../include/utils_file.h"
 #include "../include/utils_http.h"
 
 #define MAX_HEADERS 100

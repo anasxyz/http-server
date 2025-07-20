@@ -2,10 +2,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <pthread.h>
 
 #include "../include/utils_file.h"
+
+bool is_dir(const char *path) {
+  struct stat sb;
+  if (stat(path, &sb) == 0 && S_ISDIR(sb.st_mode)) {
+    return true;
+  }
+  return false;
+}
+
+bool is_file(const char *path) {
+  struct stat sb;
+  if (stat(path, &sb) == 0 && S_ISREG(sb.st_mode)) {
+    return true;
+  }
+  return false;
+}
 
 // reads and serves requested file
 FILE* get_file(const char *path) {

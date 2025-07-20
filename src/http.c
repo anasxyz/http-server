@@ -8,7 +8,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "../include/config.h"
 #include "../include/utils_file.h"
 #include "../include/utils_path.h"
 #include "../include/http.h"
@@ -51,7 +50,7 @@ void send_response(int socket, HttpResponse *response) {
 
 HttpResponse *handle_get(HttpRequest *request, void *context) {
   // not yet
-  // return NULL;
+  return NULL;
 }
 
 HttpResponse *handle_post(HttpRequest *request, void *context) {
@@ -90,6 +89,46 @@ char *serialise_response(HttpResponse *response, bool include_body) {
   return buffer;
 }
 
+char* try_paths(const char* path) {
+  char* file_path = NULL;
+  
+  if (!path) {
+    return NULL;
+  }
+
+  if (realpath(path, NULL) && !is_dir(path)) {
+    return strdup(path);
+  }
+
+  // Try path/index.html if it's a directory
+  if (realpath(path, NULL) && is_dir(path)) {
+    file_path = join_paths(path, "index.html");
+    if (file_path && realpath(file_path, NULL)) {
+      return strdup(file_path);
+    }
+    free(file_path);
+    file_path = NULL;
+  }
+
+  // Try path.html if it's a file without extension
+  if (!is_dir(path)) {
+    size_t len = strlen(path);
+    file_path = malloc(len + 6); // ".html" + '\0'
+    if (!file_path) return NULL;
+
+    strcpy(file_path, path);
+    strcat(file_path, ".html");
+
+    if (realpath(file_path, NULL)) {
+      return strdup(file_path);
+    }
+    free(file_path);
+    file_path = NULL;
+  }
+
+  return NULL; // nothing worked
+}
+
 void handle_request(int socket, char *request_buffer) {
   char* http_str = NULL;
 
@@ -99,6 +138,12 @@ void handle_request(int socket, char *request_buffer) {
     if (response) {
       char* path = join_paths("/var/www/", request->request_line.path);
       if (path) {
+        path = try_paths(path);
+        if (!path) {
+          // TODO: handle NULL path because path doesn't exist even after trying
+          path = strdup("/var/www/404.html"); 
+        }
+
         // get body from file here
         response->body = get_body_from_file(path);
         if (!response->body) {
@@ -108,12 +153,13 @@ void handle_request(int socket, char *request_buffer) {
 
         http_str = serialise_response(response, true);
 
-        printf("\n====== RESPONSE SENT ======\n");
-        printf("%s\n", http_str);
-        printf("===========================");
+        // printf("\n====== RESPONSE SENT ======\n");
+        // printf("%s\n", http_str);
+        // printf("===========================");
 
         send(socket, http_str, strlen(http_str), 0);
         
+        free(http_str);
         free(path);
         free_request(request);
         free_response(response);
@@ -129,8 +175,6 @@ void handle_request(int socket, char *request_buffer) {
   } else {
     // TODO: handle NULL request error
   }
-
-  if (http_str) free(http_str);
 }
 
 /*
