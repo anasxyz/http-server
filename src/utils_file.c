@@ -85,6 +85,7 @@ char *read_file_to_buffer(FILE *fp, size_t *out_size) {
     return buffer;
 }
 
+// allocates memory, caller must free
 char *get_body_from_file(const char *filepath) {
     FILE *file = fopen(filepath, "rb");
     if (!file) {

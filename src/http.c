@@ -19,14 +19,14 @@
 
 #define DEFAULT_HTTP_PORT 80
 
-HttpResponse *create_response() {
+HttpResponse *create_response(int status_code) {
   HttpResponse *response = malloc(sizeof(HttpResponse));
   if (!response)
     return NULL;
 
   // set status line
   response->status_line.http_version = strdup("HTTP/1.1");
-  response->status_line.status_code = 200;
+  response->status_line.status_code = status_code;
   response->status_line.status_reason =
       strdup(get_status_reason(response->status_line.status_code));
 
@@ -38,14 +38,20 @@ HttpResponse *create_response() {
   int header_count = sizeof(headers) / sizeof(Header);
   response->headers = malloc(sizeof(Header) * header_count);
   response->header_count = header_count;
-
   for (int i = 0; i < header_count; i++) {
     response->headers[i].key = strdup(headers[i].key);
     response->headers[i].value = strdup(headers[i].value);
   }
 
-  // set body
-  response->body = NULL;
+  if (status_code >= 400) {
+    char error_file[256];
+    snprintf(error_file, sizeof(error_file), "/%d.html", status_code);
+    char *error_path = join_paths(ROOT, error_file);
+    response->body = get_body_from_file(error_path);
+    free(error_path);
+  } else {
+    response->body = NULL;
+  }
 
   return response;
 }
@@ -197,7 +203,8 @@ Proxy *find_proxy_for_path(const char *request_path) {
     size_t prefix_len = strlen(PROXIES[i].from);
 
     // If proxy->from ends with '/', remove it for matching
-    bool ends_with_slash = (prefix_len > 0 && PROXIES[i].from[prefix_len - 1] == '/');
+    bool ends_with_slash =
+        (prefix_len > 0 && PROXIES[i].from[prefix_len - 1] == '/');
 
     if (ends_with_slash) {
       // Match with and without trailing slash
@@ -207,7 +214,8 @@ Proxy *find_proxy_for_path(const char *request_path) {
 
       // Case 2: match request_path == proxy prefix without trailing slash
       if (strncmp(request_path, PROXIES[i].from, prefix_len - 1) == 0 &&
-          (request_path[prefix_len - 1] == '\0' || request_path[prefix_len - 1] == '/'))
+          (request_path[prefix_len - 1] == '\0' ||
+           request_path[prefix_len - 1] == '/'))
         return &PROXIES[i];
     } else {
       // If proxy->from does not end with '/', just match prefix normally
@@ -220,293 +228,300 @@ Proxy *find_proxy_for_path(const char *request_path) {
 
 // Utility: Parse the proxy->to URL into host and port.
 // Returns 0 on success, -1 on failure.
-int parse_proxy_target(const char *url, char *host, size_t host_size, int *port) {
-    if (!url || !host || !port) return -1;
+int parse_proxy_target(const char *url, char *host, size_t host_size,
+                       int *port) {
+  if (!url || !host || !port)
+    return -1;
 
-    const char *p = url;
+  const char *p = url;
 
-    // Skip scheme if present: http:// or https://
-    if (strncmp(p, "http://", 7) == 0) {
-        p += 7;
-    } else if (strncmp(p, "https://", 8) == 0) {
-        p += 8;
-        // For simplicity, treat https as http (no TLS)
-    }
+  // Skip scheme if present: http:// or https://
+  if (strncmp(p, "http://", 7) == 0) {
+    p += 7;
+  } else if (strncmp(p, "https://", 8) == 0) {
+    p += 8;
+    // For simplicity, treat https as http (no TLS)
+  }
 
-    // Now p points at host[:port][/...]
+  // Now p points at host[:port][/...]
 
-    // Find end of host (':' or '/' or end)
-    size_t i = 0;
-    while (p[i] && p[i] != ':' && p[i] != '/') i++;
+  // Find end of host (':' or '/' or end)
+  size_t i = 0;
+  while (p[i] && p[i] != ':' && p[i] != '/')
+    i++;
 
-    if (i >= host_size) i = host_size - 1;
-    strncpy(host, p, i);
-    host[i] = '\0';
+  if (i >= host_size)
+    i = host_size - 1;
+  strncpy(host, p, i);
+  host[i] = '\0';
 
-    *port = DEFAULT_HTTP_PORT; // default
+  *port = DEFAULT_HTTP_PORT; // default
 
-    // If next char is ':', parse port
-    if (p[i] == ':') {
-        i++; // move past ':'
-        // parse port digits until '/' or end
-        int j = i;
-        while (p[j] && isdigit((unsigned char)p[j])) j++;
+  // If next char is ':', parse port
+  if (p[i] == ':') {
+    i++; // move past ':'
+    // parse port digits until '/' or end
+    int j = i;
+    while (p[j] && isdigit((unsigned char)p[j]))
+      j++;
 
-        char port_str[6] = {0}; // max 65535 + null
-        size_t len = j - i;
-        if (len >= sizeof(port_str)) return -1; // port too long
+    char port_str[6] = {0}; // max 65535 + null
+    size_t len = j - i;
+    if (len >= sizeof(port_str))
+      return -1; // port too long
 
-        strncpy(port_str, p + i, len);
-        *port = atoi(port_str);
-        if (*port <= 0 || *port > 65535) *port = DEFAULT_HTTP_PORT;
-    }
+    strncpy(port_str, p + i, len);
+    *port = atoi(port_str);
+    if (*port <= 0 || *port > 65535)
+      *port = DEFAULT_HTTP_PORT;
+  }
 
-    return 0;
+  return 0;
 }
 
 // Helper: returns a new malloc'ed string with the path prefix stripped
 char *strip_prefix(const char *path, const char *prefix) {
-    size_t prefix_len = strlen(prefix);
-    if (strncmp(path, prefix, prefix_len) == 0) {
-        // If the prefix matches, return strdup of the suffix
-        return strdup(path + prefix_len);
-    }
-    return strdup(path); // no prefix match, return original path copy
+  size_t prefix_len = strlen(prefix);
+  if (strncmp(path, prefix, prefix_len) == 0) {
+    // If the prefix matches, return strdup of the suffix
+    return strdup(path + prefix_len);
+  }
+  return strdup(path); // no prefix match, return original path copy
 }
 
-HttpResponse *proxy_request(HttpRequest *request, Proxy *proxy, const char *original_request_str) {
-    char host[256];
-    int port = 0;
+HttpResponse *proxy_request(HttpRequest *request, Proxy *proxy,
+                            const char *original_request_str) {
+  char host[256];
+  int port = 0;
 
-    if (parse_proxy_target(proxy->to, host, sizeof(host), &port) != 0) {
-        fprintf(stderr, "Failed to parse proxy target: %s\n", proxy->to);
-        return NULL;
-    }
+  if (parse_proxy_target(proxy->to, host, sizeof(host), &port) != 0) {
+    fprintf(stderr, "Failed to parse proxy target: %s\n", proxy->to);
+    return NULL;
+  }
 
-    printf("Proxy forwarding to host: %s port: %d\n", host, port);
+  printf("Proxy forwarding to host: %s port: %d\n", host, port);
 
-    // Modify the original request line to strip proxy prefix
-    // Extract first line (request line) from original_request_str
-    const char *first_line_end = strstr(original_request_str, "\r\n");
-    if (!first_line_end) {
-        fprintf(stderr, "Invalid HTTP request string\n");
-        return NULL;
-    }
+  // Modify the original request line to strip proxy prefix
+  // Extract first line (request line) from original_request_str
+  const char *first_line_end = strstr(original_request_str, "\r\n");
+  if (!first_line_end) {
+    fprintf(stderr, "Invalid HTTP request string\n");
+    return NULL;
+  }
 
-    size_t first_line_len = first_line_end - original_request_str;
-    char *first_line = malloc(first_line_len + 1);
-    if (!first_line) return NULL;
-    strncpy(first_line, original_request_str, first_line_len);
-    first_line[first_line_len] = '\0';
+  size_t first_line_len = first_line_end - original_request_str;
+  char *first_line = malloc(first_line_len + 1);
+  if (!first_line)
+    return NULL;
+  strncpy(first_line, original_request_str, first_line_len);
+  first_line[first_line_len] = '\0';
 
-    // Parse request line: METHOD PATH VERSION
-    char method[16], path[1024], version[16];
-    if (sscanf(first_line, "%15s %1023s %15s", method, path, version) != 3) {
-        fprintf(stderr, "Failed to parse request line\n");
-        free(first_line);
-        return NULL;
-    }
+  // Parse request line: METHOD PATH VERSION
+  char method[16], path[1024], version[16];
+  if (sscanf(first_line, "%15s %1023s %15s", method, path, version) != 3) {
+    fprintf(stderr, "Failed to parse request line\n");
     free(first_line);
+    return NULL;
+  }
+  free(first_line);
 
-    // Strip the proxy->from prefix from path
-    char *new_path = strip_prefix(path, proxy->from);
-    if (!new_path) return NULL;
+  // Strip the proxy->from prefix from path
+  char *new_path = strip_prefix(path, proxy->from);
+  if (!new_path)
+    return NULL;
 
-    if (new_path[0] != '/') {
-        // Make sure new path starts with '/'
-        char *fixed_path = malloc(strlen(new_path) + 2);
-        if (!fixed_path) {
-            free(new_path);
-            return NULL;
-        }
-        fixed_path[0] = '/';
-        strcpy(fixed_path + 1, new_path);
-        free(new_path);
-        new_path = fixed_path;
+  if (new_path[0] != '/') {
+    // Make sure new path starts with '/'
+    char *fixed_path = malloc(strlen(new_path) + 2);
+    if (!fixed_path) {
+      free(new_path);
+      return NULL;
     }
-
-    // Build new request line string
-    char new_request_line[1152]; // enough buffer
-    snprintf(new_request_line, sizeof(new_request_line), "%s %s %s\r\n", method, new_path, version);
+    fixed_path[0] = '/';
+    strcpy(fixed_path + 1, new_path);
     free(new_path);
+    new_path = fixed_path;
+  }
 
-    // Build the modified request string: new_request_line + rest of original_request_str after first \r\n
-    const char *rest = first_line_end + 2; // skip \r\n
-    size_t rest_len = strlen(rest);
-    size_t new_request_len = strlen(new_request_line) + rest_len + 1;
+  // Build new request line string
+  char new_request_line[1152]; // enough buffer
+  snprintf(new_request_line, sizeof(new_request_line), "%s %s %s\r\n", method,
+           new_path, version);
+  free(new_path);
 
-    char *modified_request_str = malloc(new_request_len);
-    if (!modified_request_str) return NULL;
-    strcpy(modified_request_str, new_request_line);
-    strcat(modified_request_str, rest);
+  // Build the modified request string: new_request_line + rest of
+  // original_request_str after first \r\n
+  const char *rest = first_line_end + 2; // skip \r\n
+  size_t rest_len = strlen(rest);
+  size_t new_request_len = strlen(new_request_line) + rest_len + 1;
 
-    // Now continue as before: connect, send modified_request_str, receive response
+  char *modified_request_str = malloc(new_request_len);
+  if (!modified_request_str)
+    return NULL;
+  strcpy(modified_request_str, new_request_line);
+  strcat(modified_request_str, rest);
 
-    // Resolve host
-    struct addrinfo hints = {0}, *res, *p;
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
+  // Now continue as before: connect, send modified_request_str, receive
+  // response
 
-    char port_str[6];
-    snprintf(port_str, sizeof(port_str), "%d", port);
+  // Resolve host
+  struct addrinfo hints = {0}, *res, *p;
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
 
-    int err = getaddrinfo(host, port_str, &hints, &res);
-    if (err != 0) {
-        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(err));
-        free(modified_request_str);
-        return NULL;
-    }
+  char port_str[6];
+  snprintf(port_str, sizeof(port_str), "%d", port);
 
-    int sockfd = -1;
-    for (p = res; p != NULL; p = p->ai_next) {
-        sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-        if (sockfd == -1) continue;
-
-        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0) break;
-
-        close(sockfd);
-        sockfd = -1;
-    }
-    freeaddrinfo(res);
-
-    if (sockfd == -1) {
-        perror("Could not connect to proxy target");
-        free(modified_request_str);
-        return NULL;
-    }
-
-    size_t len = strlen(modified_request_str);
-    ssize_t sent = 0;
-    while (sent < (ssize_t)len) {
-        ssize_t n = send(sockfd, modified_request_str + sent, len - sent, 0);
-        if (n <= 0) {
-            perror("send failed");
-            close(sockfd);
-            free(modified_request_str);
-            return NULL;
-        }
-        sent += n;
-    }
-
+  int err = getaddrinfo(host, port_str, &hints, &res);
+  if (err != 0) {
+    fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(err));
     free(modified_request_str);
+    return NULL;
+  }
 
-    // Read response as you already do ...
-    // (rest of your code unchanged)
+  int sockfd = -1;
+  for (p = res; p != NULL; p = p->ai_next) {
+    sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+    if (sockfd == -1)
+      continue;
 
-    size_t bufsize = 8192;
-    size_t offset = 0;
-    char *buffer = malloc(bufsize);
-    if (!buffer) {
-        close(sockfd);
-        return NULL;
+    if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0)
+      break;
+
+    close(sockfd);
+    sockfd = -1;
+  }
+  freeaddrinfo(res);
+
+  if (sockfd == -1) {
+    perror("Could not connect to proxy target");
+    free(modified_request_str);
+    return NULL;
+  }
+
+  size_t len = strlen(modified_request_str);
+  ssize_t sent = 0;
+  while (sent < (ssize_t)len) {
+    ssize_t n = send(sockfd, modified_request_str + sent, len - sent, 0);
+    if (n <= 0) {
+      perror("send failed");
+      close(sockfd);
+      free(modified_request_str);
+      return NULL;
     }
+    sent += n;
+  }
 
-    ssize_t nread;
-    while ((nread = recv(sockfd, buffer + offset, bufsize - offset, 0)) > 0) {
-        offset += nread;
-        if (offset + 1024 > bufsize) {
-            bufsize *= 2;
-            char *tmp = realloc(buffer, bufsize);
-            if (!tmp) {
-                free(buffer);
-                close(sockfd);
-                return NULL;
-            }
-            buffer = tmp;
-        }
-    }
+  free(modified_request_str);
 
-    if (nread < 0) {
-        perror("recv failed");
+  // Read response as you already do ...
+  // (rest of your code unchanged)
+
+  size_t bufsize = 8192;
+  size_t offset = 0;
+  char *buffer = malloc(bufsize);
+  if (!buffer) {
+    close(sockfd);
+    return NULL;
+  }
+
+  ssize_t nread;
+  while ((nread = recv(sockfd, buffer + offset, bufsize - offset, 0)) > 0) {
+    offset += nread;
+    if (offset + 1024 > bufsize) {
+      bufsize *= 2;
+      char *tmp = realloc(buffer, bufsize);
+      if (!tmp) {
         free(buffer);
         close(sockfd);
         return NULL;
+      }
+      buffer = tmp;
     }
+  }
 
-    close(sockfd);
-
-    buffer[offset] = '\0';
-
-    HttpResponse *response = parse_response(buffer);
+  if (nread < 0) {
+    perror("recv failed");
     free(buffer);
+    close(sockfd);
+    return NULL;
+  }
 
-    if (!response) {
-        fprintf(stderr, "Failed to parse proxy response\n");
-        return NULL;
-    }
+  close(sockfd);
 
-    return response;
+  buffer[offset] = '\0';
+
+  HttpResponse *response = parse_response(buffer);
+  free(buffer);
+
+  if (!response) {
+    fprintf(stderr, "Failed to parse proxy response\n");
+    return NULL;
+  }
+
+  return response;
 }
 
 void handle_request(int socket, char *request_buffer) {
-  char *http_str = NULL;
-  HttpRequest *request = NULL;
-  HttpResponse *response = NULL;
-  
-  request = parse_request(request_buffer);
+    HttpRequest *request = NULL;
+    HttpResponse *response = NULL;
+    char *http_str = NULL;
+    char *raw_path = NULL;
+    char *resolved_path = NULL;
 
-  Proxy *proxy = find_proxy_for_path(request->request_line.path);
-  if (proxy) {
-    response = proxy_request(request, proxy, request_buffer);
-    if (response) {
-      http_str = serialise_response(response, true);
-      send(socket, http_str, strlen(http_str), 0);
-      free(http_str);
-      free_response(response);
-      return;
-    } else {
-      // TODO: handle NULL response error
-      free_request(request);
-      return;
+    request = parse_request(request_buffer);
+    if (!request) {
+        response = create_response(400);
+        goto send;
     }
-  }
 
-  if (request) {
-    response = create_response();
+    // Proxy Handling
+    Proxy *proxy = find_proxy_for_path(request->request_line.path);
+    if (proxy) {
+        response = proxy_request(request, proxy, request_buffer);
+        if (!response) {
+            response = create_response(502);
+        }
+        goto send;
+    }
+
+    // Static File Handling
+    raw_path = resolve_request_path(request->request_line.path);
+    if (!raw_path) {
+        response = create_response(404);
+        goto send;
+    }
+
+    resolved_path = try_paths(raw_path);
+    free(raw_path);
+
+    if (!resolved_path) {
+        response = create_response(404);
+        goto send;
+    }
+
+    char *body = get_body_from_file(resolved_path);
+    if (!body) {
+        response = create_response(404);
+        goto send;
+    }
+
+    response = create_response(200);
+    response->body = body;
+
+send:
     if (response) {
-      char *raw_path = resolve_request_path(request->request_line.path);
-      char *path = NULL;
-      if (raw_path) {
-        path = try_paths(raw_path);
-        free(raw_path);
-        if (!path) {
-          // TODO: handle NULL path because path doesn't exist even after trying
-          path = strdup("/var/www/404.html");
-        }
-
-        // get body from file here
-        response->body = get_body_from_file(path);
-        if (!response->body) {
-          // TODO: handle NULL body error
-          response->body =
-              strdup("<html><body><h1>404 Not Found</h1></body></html>");
-          response->status_line.status_code = 404;
-        }
-
         http_str = serialise_response(response, true);
-
-        // printf("\n====== RESPONSE SENT ======\n");
-        // printf("%s\n", http_str);
-        // printf("===========================");
-
-        send(socket, http_str, strlen(http_str), 0);
-
-        free(http_str);
-        free(path);
-        free_request(request);
-        free_response(response);
-      } else {
-        // TODO: handle NULL path error
-        free_request(request);
-        free_response(response);
-      }
-    } else {
-      // TODO: handle NULL response error
-      free_request(request);
+        if (http_str) {
+            send(socket, http_str, strlen(http_str), 0);
+        }
     }
-  } else {
-    // TODO: handle NULL request error
-  }
+
+cleanup:
+    if (http_str) free(http_str);
+    if (resolved_path) free(resolved_path);
+    if (request) free_request(request);
+    if (response) free_response(response);
 }
 
 /*
