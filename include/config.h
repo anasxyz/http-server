@@ -1,7 +1,7 @@
 #ifndef config_h
 #define config_h
 
-#include "route.h"
+#include <stddef.h>
 
 typedef struct {
   char* from; // request prefix like "/images/"
@@ -14,11 +14,7 @@ typedef struct {
 } Proxy;
 
 extern int PORT;
-extern int DEFAULT_PROXY_PORT;
 extern char* ROOT;
-
-extern Route* ROUTES;
-extern size_t ROUTES_COUNT;
 
 extern char **TRY_FILES;
 extern size_t TRY_FILES_COUNT;

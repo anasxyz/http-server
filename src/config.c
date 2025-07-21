@@ -1,4 +1,3 @@
-#include "../include/config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,11 +6,7 @@
 
 // default values
 int PORT = 8080;
-int DEFAULT_PROXY_PORT = 8080;
 char *ROOT = "/var/www/";
-
-Route *ROUTES = NULL;
-size_t ROUTES_COUNT = 0;
 
 char **TRY_FILES;
 size_t TRY_FILES_COUNT = 0;
