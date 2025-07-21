@@ -19,6 +19,7 @@ typedef struct {
   HttpResponseStatusLine status_line;
   Header *headers;
   const char* body;
+  size_t body_length;
   size_t header_count;
 } HttpResponse;
 
@@ -50,6 +51,7 @@ char* http_last_modified(const char *path);
 void trim_crlf(char *line);
 HttpRequest* parse_request(const char *raw_request);
 HttpResponse* parse_response(const char *raw_response);
+void set_header(HttpResponse *response, const char *key, const char *value);
 void free_response(HttpResponse *response);
 void free_request(HttpRequest *request);
 

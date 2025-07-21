@@ -90,38 +90,28 @@ char *read_file_to_buffer(FILE *fp, size_t *out_size) {
 }
 
 // allocates memory, caller must free
-char *get_body_from_file(const char *filepath) {
-  FILE *file = fopen(filepath, "rb");
-  if (!file) {
-    perror("fopen failed");
-    return NULL;
-  }
+char *get_body_from_file(const char *path, size_t *out_size) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return NULL;
 
-  fseek(file, 0, SEEK_END);
-  long length = ftell(file);
-  rewind(file);
+  fseek(f, 0, SEEK_END);
+  size_t size = ftell(f);
+  rewind(f);
 
-  if (length < 0) {
-    fclose(file);
-    return NULL;
-  }
-
-  size_t length_u = (size_t)length;
-
-  char *buffer = malloc(length_u + 1);
+  char *buffer = malloc(size);
   if (!buffer) {
-    fclose(file);
+    fclose(f);
     return NULL;
   }
 
-  size_t read = fread(buffer, 1, length_u, file);
-  if (read != length_u) {
+  if (fread(buffer, 1, size, f) != size) {
     free(buffer);
-    fclose(file);
+    fclose(f);
     return NULL;
   }
 
-  buffer[length_u] = '\0';
-  fclose(file);
+  fclose(f);
+  if (out_size)
+    *out_size = size;
   return buffer;
 }

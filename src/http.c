@@ -45,10 +45,15 @@ HttpResponse *create_response(int status_code) {
     char error_file[256];
     snprintf(error_file, sizeof(error_file), "/%d.html", status_code);
     char *error_path = join_paths(ROOT, error_file);
-    response->body = get_body_from_file(error_path);
+
+    size_t error_size = 0;
+    response->body = get_body_from_file(error_path, &error_size);
+    response->body_length = error_size;
+
     free(error_path);
   } else {
     response->body = NULL;
+    response->body_length = 0;
   }
 
   return response;
@@ -68,13 +73,8 @@ HttpResponse *handle_post(HttpRequest *request, void *context) {
 
 // serialise response to string.
 // include_body: whether to include the body in the response.
-char *serialise_response(HttpResponse *response, bool include_body) {
-  // estimate maximum size
+char *serialise_response(HttpResponse *response) {
   int size = 1024 + (response->header_count * 128);
-  if (include_body && response->body) {
-    size += strlen(response->body);
-  }
-
   char *buffer = malloc(size);
   if (!buffer)
     return NULL;
@@ -89,11 +89,6 @@ char *serialise_response(HttpResponse *response, bool include_body) {
   }
 
   offset += snprintf(buffer + offset, size - offset, "\r\n");
-
-  if (include_body && response->body) {
-    snprintf(buffer + offset, size - offset, "%s", response->body);
-  }
-
   return buffer;
 }
 
@@ -137,20 +132,41 @@ void handle_request(int socket, char *request_buffer) {
     goto send;
   }
 
-  char *body = get_body_from_file(resolved_path);
+  // --- fill response ---
+  size_t body_length = 0;
+  char *body = get_body_from_file(resolved_path, &body_length);
   if (!body) {
     response = create_response(404);
     goto send;
   }
 
+  // set body and body length
   response = create_response(200);
   response->body = body;
+  response->body_length = body_length;
+
+  // set content type
+  const char *mime_type = get_mime_type(resolved_path);
+  set_header(response, "Content-Type", mime_type);
+
+  // set content length
+  char len_buffer[32];
+  snprintf(len_buffer, sizeof(len_buffer), "%zu", body_length);
+  set_header(response, "Content-Length", len_buffer);
+
+  // set connection
+  set_header(response, "Connection", "close");
 
 send:
   if (response) {
-    http_str = serialise_response(response, true);
+    http_str = serialise_response(response);
     if (http_str) {
       send(socket, http_str, strlen(http_str), 0);
+
+      // send binary body separately
+      if (response->body && response->body_length > 0) {
+        send(socket, response->body, response->body_length, 0);
+      }
     }
   }
 

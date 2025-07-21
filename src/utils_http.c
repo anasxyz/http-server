@@ -475,6 +475,16 @@ HttpResponse *parse_response(const char *raw_response) {
   return response;
 }
 
+void set_header(HttpResponse *res, const char *key, const char *val) {
+  for (size_t i = 0; i < res->header_count; i++) {
+    if (strcmp(res->headers[i].key, key) == 0) {
+      free(res->headers[i].value);
+      res->headers[i].value = strdup(val);
+      return;
+    }
+  }
+}
+
 void free_response(HttpResponse *response) {
   if (!response)
     return;
