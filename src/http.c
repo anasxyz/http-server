@@ -149,6 +149,41 @@ char* try_paths(const char* path) {
   return NULL;
 }
 
+char *resolve_request_path(const char *request_path) {
+  printf("Resolving request path: %s\n", request_path);
+
+  for (int i = 0; i < ALIASES_COUNT; i++) {
+    const char *prefix = ALIASES[i].from;
+    const char *mapped_path = ALIASES[i].to;
+
+    printf("Checking alias: \"%s\" -> \"%s\"\n", prefix, mapped_path);
+
+    if (strncmp(request_path, prefix, strlen(prefix)) == 0) {
+      const char *suffix = request_path + strlen(prefix);
+      printf("Alias match found! Replacing \"%s\" with \"%s\"\n", prefix, mapped_path);
+      printf("Suffix after prefix: \"%s\"\n", suffix);
+
+      // check if mapped_path is a file
+      if (!is_dir(mapped_path)) {
+        printf("Alias target is a file. Using it directly: %s\n", mapped_path);
+        return strdup(mapped_path);
+      }
+
+      // if it's a dir, join suffix
+      char *final_path = join_paths(mapped_path, suffix);
+      printf("Resolved path using alias: %s\n", final_path);
+      return final_path;
+    }
+  }
+
+  // no alias matched sofall back to default root
+  printf("No alias matched. Falling back to root: %s\n", ROOT);
+  char *fallback_path = join_paths(ROOT, request_path);
+  printf("Resolved path using root: %s\n", fallback_path);
+
+  return fallback_path;
+}
+
 void handle_request(int socket, char *request_buffer) {
   char* http_str = NULL;
 
@@ -156,7 +191,7 @@ void handle_request(int socket, char *request_buffer) {
   if (request) {
     HttpResponse *response = create_response();
     if (response) {
-      char* raw_path = join_paths("/var/www/", request->request_line.path);
+      char* raw_path = resolve_request_path(request->request_line.path);
       char* path = NULL;
       if (raw_path) {
         path = try_paths(raw_path);

@@ -17,9 +17,9 @@ bool match_prefix(const char *path, const char *prefix) {
 }
 
 Route* match_route(char *path) {
-    for (size_t i = 0; i < num_routes; i++) {
-        if (match_prefix(path, routes[i].prefix)) {
-            return &routes[i];
+    for (size_t i = 0; i < ROUTES_COUNT; i++) {
+        if (match_prefix(path, ROUTES[i].prefix)) {
+            return &ROUTES[i];
         }
     }
     return NULL;
