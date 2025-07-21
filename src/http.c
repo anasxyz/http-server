@@ -11,11 +11,16 @@
 #include <unistd.h>
 
 #include "../include/config.h"
-#include "../include/proxy.h"
 #include "../include/http.h"
+#include "../include/proxy.h"
 #include "../include/utils_file.h"
 #include "../include/utils_http.h"
 #include "../include/utils_path.h"
+
+// set headers
+Header headers[] = {{"Date", ""},          {"Server", ""},
+                    {"Last-Modified", ""}, {"Content-Length", ""},
+                    {"Content-Type", ""},  {"Connection", ""}};
 
 HttpResponse *create_response(int status_code) {
   HttpResponse *response = malloc(sizeof(HttpResponse));
@@ -27,11 +32,6 @@ HttpResponse *create_response(int status_code) {
   response->status_line.status_code = status_code;
   response->status_line.status_reason =
       strdup(get_status_reason(response->status_line.status_code));
-
-  // set headers
-  Header headers[] = {{"Date", ""},          {"Server", ""},
-                      {"Last-Modified", ""}, {"Content-Length", ""},
-                      {"Content-Type", ""},  {"Connection", ""}};
 
   size_t header_count = sizeof(headers) / sizeof(Header);
   response->headers = malloc(sizeof(Header) * header_count);
@@ -98,66 +98,70 @@ char *serialise_response(HttpResponse *response, bool include_body) {
 }
 
 void handle_request(int socket, char *request_buffer) {
-    HttpRequest *request = NULL;
-    HttpResponse *response = NULL;
-    char *http_str = NULL;
-    char *raw_path = NULL;
-    char *resolved_path = NULL;
+  HttpRequest *request = NULL;
+  HttpResponse *response = NULL;
+  char *http_str = NULL;
+  char *raw_path = NULL;
+  char *resolved_path = NULL;
 
-    request = parse_request(request_buffer);
-    if (!request) {
-        response = create_response(400);
-        goto send;
+  request = parse_request(request_buffer);
+  if (!request) {
+    response = create_response(400);
+    goto send;
+  }
+
+  // --- proxy handling ---
+  Proxy *proxy = find_proxy_for_path(request->request_line.path);
+  if (proxy) {
+    response = proxy_request(proxy, request_buffer);
+    if (!response) {
+      response = create_response(502);
     }
+    goto send;
+  }
 
-    // --- proxy handling ---
-    Proxy *proxy = find_proxy_for_path(request->request_line.path);
-    if (proxy) {
-        response = proxy_request(proxy, request_buffer);
-        if (!response) {
-            response = create_response(502);
-        }
-        goto send;
-    }
+  // --- static file handling ---
+  // check for alias matches
+  raw_path = check_for_alias_match(request->request_line.path);
+  if (!raw_path) {
+    response = create_response(404);
+    goto send;
+  }
 
-    // --- static file handling ---
-    // check for alias matches
-    raw_path = check_for_alias_match(request->request_line.path);
-    if (!raw_path) {
-        response = create_response(404);
-        goto send;
-    }
+  // try paths from try_files in config
+  resolved_path = try_paths(raw_path);
+  free(raw_path);
 
-    // try paths from try_files in config
-    resolved_path = try_paths(raw_path);
-    free(raw_path);
+  if (!resolved_path) {
+    response = create_response(404);
+    goto send;
+  }
 
-    if (!resolved_path) {
-        response = create_response(404);
-        goto send;
-    }
+  char *body = get_body_from_file(resolved_path);
+  if (!body) {
+    response = create_response(404);
+    goto send;
+  }
 
-    char *body = get_body_from_file(resolved_path);
-    if (!body) {
-        response = create_response(404);
-        goto send;
-    }
-
-    response = create_response(200);
-    response->body = body;
+  response = create_response(200);
+  response->body = body;
 
 send:
-    if (response) {
-        http_str = serialise_response(response, true);
-        if (http_str) {
-            send(socket, http_str, strlen(http_str), 0);
-        }
+  if (response) {
+    http_str = serialise_response(response, true);
+    if (http_str) {
+      send(socket, http_str, strlen(http_str), 0);
     }
+  }
 
-    if (http_str) free(http_str);
-    if (resolved_path) free(resolved_path);
-    if (request) free_request(request);
-    if (response) free_response(response);
+  if (http_str)
+    free(http_str);
+  if (resolved_path)
+    free(resolved_path);
+  if (request)
+    free_request(request);
+  if (response)
+    free_response(response);
 }
 
 /*
