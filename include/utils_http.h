@@ -19,7 +19,7 @@ typedef struct {
   HttpResponseStatusLine status_line;
   Header *headers;
   const char* body;
-  int header_count;
+  size_t header_count;
 } HttpResponse;
 
 typedef struct {
@@ -31,7 +31,7 @@ typedef struct {
 typedef struct {
   HttpRequestLine request_line;
   Header *headers;
-  int header_count;
+  size_t header_count;
 } HttpRequest;
 
 typedef enum {
@@ -42,12 +42,14 @@ typedef enum {
   HTTP_STATUS_INTERNAL_SERVER_ERROR = 500,
 } HttpStatusCode;
 
-char *get_status_reason(int code);
-char *http_date_now();
-char *http_last_modified(const char *path);
+char* try_paths(const char *path);
+char* check_for_alias_match(const char *request_path);
+char* get_status_reason(int code);
+char* http_date_now();
+char* http_last_modified(const char *path);
 void trim_crlf(char *line);
-HttpRequest *parse_request(const char *raw_request);
-HttpResponse *parse_response(const char *raw_response);
+HttpRequest* parse_request(const char *raw_request);
+HttpResponse* parse_response(const char *raw_response);
 void free_response(HttpResponse *response);
 void free_request(HttpRequest *request);
 

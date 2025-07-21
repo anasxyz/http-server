@@ -10,7 +10,7 @@
 #include "../include/client.h"
 #include "../include/server.h"
 
-void handle_sigint(int sig) {
+void handle_sigint() {
   printf("\nCaught SIGINT, cleaning up...\n");
   free_mock_config();
   exit(0);

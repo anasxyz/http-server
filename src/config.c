@@ -7,7 +7,7 @@
 
 // default values
 int PORT = 8080;
-
+int DEFAULT_PROXY_PORT = 8080;
 char *ROOT = "/var/www/";
 
 Route *ROUTES = NULL;

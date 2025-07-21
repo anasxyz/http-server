@@ -1,14 +1,115 @@
 #include <ctype.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 
 #include "../include/utils_http.h"
+#include "../include/config.h"
+#include "../include/utils_file.h"
+#include "../include/utils_path.h"
 
 #define MAX_HEADERS 100
 #define MAX_PATH 1024
+
+char *try_paths(const char *path) {
+  if (!path)
+    return NULL;
+
+  char *resolved = NULL;
+
+  // try the exact path directly (file or dir)
+  printf("Trying exact path: %s\n", path);
+  resolved = realpath(path, NULL);
+  if (resolved && !is_dir(path)) {
+    char *result = strdup(resolved);
+    free(resolved);
+    return result;
+  }
+  free(resolved);
+
+  // if directory try known fallback files from config
+  if (is_dir(path)) {
+    size_t try_count = TRY_FILES_COUNT;
+
+    for (size_t i = 0; i < try_count; i++) {
+      char *candidate = join_paths(path, TRY_FILES[i]);
+      printf("Trying fallback: %s\n", candidate);
+
+      resolved = realpath(candidate, NULL);
+      if (resolved) {
+        char *result = strdup(resolved);
+        free(resolved);
+        free(candidate);
+        return result;
+      }
+      free(candidate);
+      free(resolved);
+    }
+  }
+
+  // if not directory try adding .html extension
+  if (!is_dir(path)) {
+    size_t len = strlen(path);
+    char *html_path = malloc(len + 6); // +5 for ".html" +1 for '\0'
+    if (!html_path)
+      return NULL;
+
+    strcpy(html_path, path);
+    strcat(html_path, ".html");
+    printf("Trying .html fallback: %s\n", html_path);
+
+    resolved = realpath(html_path, NULL);
+    if (resolved) {
+      char *result = strdup(resolved);
+      free(resolved);
+      free(html_path);
+      return result;
+    }
+    free(html_path);
+    free(resolved);
+  }
+
+  return NULL;
+}
+
+char *check_for_alias_match(const char *request_path) {
+  printf("Resolving request path: %s\n", request_path);
+
+  for (size_t i = 0; i < ALIASES_COUNT; i++) {
+    const char *prefix = ALIASES[i].from;
+    const char *mapped_path = ALIASES[i].to;
+
+    printf("Checking alias: \"%s\" -> \"%s\"\n", prefix, mapped_path);
+
+    if (strncmp(request_path, prefix, strlen(prefix)) == 0) {
+      const char *suffix = request_path + strlen(prefix);
+      printf("Alias match found! Replacing \"%s\" with \"%s\"\n", prefix,
+             mapped_path);
+      printf("Suffix after prefix: \"%s\"\n", suffix);
+
+      // check if mapped_path is file
+      if (!is_dir(mapped_path)) {
+        printf("Alias target is a file. Using it directly: %s\n", mapped_path);
+        return strdup(mapped_path);
+      }
+
+      // if directory join suffix
+      char *final_path = join_paths(mapped_path, suffix);
+      printf("Resolved path using alias: %s\n", final_path);
+      return final_path;
+    }
+  }
+
+  // no alias matched so fall back to default root
+  printf("No alias matched. Falling back to root: %s\n", ROOT);
+  char *fallback_path = join_paths(ROOT, request_path);
+  printf("Resolved path using root: %s\n", fallback_path);
+
+  return fallback_path;
+}
 
 char *get_status_reason(int code) {
   switch (code) {
@@ -238,7 +339,7 @@ error:
       free(req->request_line.path);
     if (req->request_line.version)
       free(req->request_line.version);
-    for (int i = 0; i < req->header_count; i++) {
+    for (size_t i = 0; i < req->header_count; i++) {
       free(req->headers[i].key);
       free(req->headers[i].value);
     }
@@ -378,7 +479,7 @@ void free_response(HttpResponse *response) {
   if (!response)
     return;
 
-  // Free status line strings
+  // free status line strings
   if (response->status_line.http_version) {
     free(response->status_line.http_version);
   }
@@ -386,8 +487,8 @@ void free_response(HttpResponse *response) {
     free(response->status_line.status_reason);
   }
 
-  // Free each header key and value
-  for (int i = 0; i < response->header_count; i++) {
+  // free each header key and value
+  for (size_t i = 0; i < response->header_count; i++) {
     if (response->headers[i].key) {
       free(response->headers[i].key);
     }
@@ -396,18 +497,17 @@ void free_response(HttpResponse *response) {
     }
   }
 
-  // Free headers array itself
+  // free headers array itself
   if (response->headers) {
     free(response->headers);
   }
 
-  // Free body if allocated dynamically
-  // IMPORTANT: Only free if you own the memory!
+  // free body if allocated dynamically
+  // important to only free body if memory is owned so prolly use strdup always
   if (response->body) {
     free((void *)response->body);
   }
 
-  // Finally free the HttpResponse struct itself
   free(response);
 }
 
@@ -415,7 +515,7 @@ void free_request(HttpRequest *request) {
   if (!request)
     return;
 
-  // Free request line strings
+  // free request line strings
   if (request->request_line.method) {
     free(request->request_line.method);
   }
@@ -426,8 +526,8 @@ void free_request(HttpRequest *request) {
     free(request->request_line.version);
   }
 
-  // Free each header key and value
-  for (int i = 0; i < request->header_count; i++) {
+  // free each header key and value
+  for (size_t i = 0; i < request->header_count; i++) {
     if (request->headers[i].key) {
       free(request->headers[i].key);
     }
@@ -436,11 +536,11 @@ void free_request(HttpRequest *request) {
     }
   }
 
-  // Free headers array itself
+  // free headers array itself
   if (request->headers) {
     free(request->headers);
   }
 
-  // Finally free the HttpRequest struct itself
+  // finally free the HttpRequest struct itself
   free(request);
 }

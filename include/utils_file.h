@@ -1,5 +1,5 @@
-#ifndef file_handler_h
-#define file_handler_h
+#ifndef utils_file_h
+#define utils_file_h
 
 #include <stdio.h>
 
@@ -9,4 +9,4 @@ char *get_body_from_file(const char *filepath);
 bool is_dir(const char *path);
 bool is_file(const char *path);
 
-#endif /* file_handler_h */
+#endif /* utils_file_h */

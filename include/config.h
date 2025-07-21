@@ -14,7 +14,7 @@ typedef struct {
 } Proxy;
 
 extern int PORT;
-
+extern int DEFAULT_PROXY_PORT;
 extern char* ROOT;
 
 extern Route* ROUTES;
