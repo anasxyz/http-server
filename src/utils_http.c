@@ -248,6 +248,132 @@ error:
   return NULL;
 }
 
+HttpResponse *parse_response(const char *raw_response) {
+  if (!raw_response)
+    return NULL;
+
+  HttpResponse *response = malloc(sizeof(HttpResponse));
+  if (!response)
+    return NULL;
+
+  memset(response, 0, sizeof(HttpResponse));
+
+  const char *ptr = raw_response;
+  const char *line_end;
+
+  // 1. Parse status line: "HTTP/1.1 200 OK\r\n"
+  line_end = strstr(ptr, "\r\n");
+  if (!line_end) {
+    free(response);
+    return NULL;
+  }
+
+  // Copy status line into buffer for tokenizing
+  size_t status_line_len = line_end - ptr;
+  char *status_line = malloc(status_line_len + 1);
+  if (!status_line) {
+    free(response);
+    return NULL;
+  }
+  memcpy(status_line, ptr, status_line_len);
+  status_line[status_line_len] = '\0';
+
+  // Parse status line parts
+  char *token = strtok(status_line, " ");
+  if (!token) {
+    free(status_line);
+    free(response);
+    return NULL;
+  }
+  response->status_line.http_version = strdup(token);
+
+  token = strtok(NULL, " ");
+  if (!token) {
+    free(status_line);
+    free(response->status_line.http_version);
+    free(response);
+    return NULL;
+  }
+  response->status_line.status_code = atoi(token);
+
+  token = strtok(NULL, "\r\n");
+  if (!token)
+    token = ""; // no reason phrase
+  response->status_line.status_reason = strdup(token);
+
+  free(status_line);
+
+  ptr = line_end + 2; // move past "\r\n"
+
+  // 2. Parse headers until empty line ("\r\n")
+  // Count headers first (optional but useful for allocation)
+  size_t headers_capacity = 10;
+  response->headers = malloc(sizeof(Header) * headers_capacity);
+  response->header_count = 0;
+
+  while (true) {
+    line_end = strstr(ptr, "\r\n");
+    if (!line_end)
+      break; // malformed
+
+    if (line_end == ptr) {
+      // Empty line: end of headers
+      ptr += 2;
+      break;
+    }
+
+    size_t line_len = line_end - ptr;
+    char *header_line = malloc(line_len + 1);
+    if (!header_line)
+      break;
+    memcpy(header_line, ptr, line_len);
+    header_line[line_len] = '\0';
+
+    // Split header line at ':'
+    char *colon = strchr(header_line, ':');
+    if (!colon) {
+      free(header_line);
+      break;
+    }
+
+    *colon = '\0';
+    char *key = header_line;
+    char *value = colon + 1;
+
+    // Trim whitespace from value start
+    while (isspace((unsigned char)*value))
+      value++;
+
+    // Add header to response
+    if (response->header_count >= headers_capacity) {
+      headers_capacity *= 2;
+      Header *tmp =
+          realloc(response->headers, sizeof(Header) * headers_capacity);
+      if (!tmp) {
+        free(header_line);
+        break;
+      }
+      response->headers = tmp;
+    }
+
+    response->headers[response->header_count].key = strdup(key);
+    response->headers[response->header_count].value = strdup(value);
+    response->header_count++;
+
+    free(header_line);
+    ptr = line_end + 2;
+  }
+
+  // 3. Body is everything after the blank line
+  if (*ptr) {
+    response->body = strdup(ptr);
+  } else {
+    response->body = NULL;
+  }
+
+  return response;
+}
+
 void free_response(HttpResponse *response) {
   if (!response)
     return;
@@ -286,35 +412,35 @@ void free_response(HttpResponse *response) {
 }
 
 void free_request(HttpRequest *request) {
-    if (!request) return;
+  if (!request)
+    return;
 
-    // Free request line strings
-    if (request->request_line.method) {
-        free(request->request_line.method);
-    }
-    if (request->request_line.path) {
-        free(request->request_line.path);
-    }
-    if (request->request_line.version) {
-        free(request->request_line.version);
-    }
+  // Free request line strings
+  if (request->request_line.method) {
+    free(request->request_line.method);
+  }
+  if (request->request_line.path) {
+    free(request->request_line.path);
+  }
+  if (request->request_line.version) {
+    free(request->request_line.version);
+  }
 
-    // Free each header key and value
-    for (int i = 0; i < request->header_count; i++) {
-        if (request->headers[i].key) {
-            free(request->headers[i].key);
-        }
-        if (request->headers[i].value) {
-            free(request->headers[i].value);
-        }
+  // Free each header key and value
+  for (int i = 0; i < request->header_count; i++) {
+    if (request->headers[i].key) {
+      free(request->headers[i].key);
     }
-
-    // Free headers array itself
-    if (request->headers) {
-        free(request->headers);
+    if (request->headers[i].value) {
+      free(request->headers[i].value);
     }
+  }
 
-    // Finally free the HttpRequest struct itself
-    free(request);
+  // Free headers array itself
+  if (request->headers) {
+    free(request->headers);
+  }
+
+  // Finally free the HttpRequest struct itself
+  free(request);
 }
-

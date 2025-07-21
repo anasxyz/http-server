@@ -19,6 +19,9 @@ size_t TRY_FILES_COUNT = 0;
 Alias *ALIASES = NULL;
 size_t ALIASES_COUNT = 0;
 
+Proxy *PROXIES = NULL;
+size_t PROXIES_COUNT = 0;
+
 void load_mock_config() {
   // TRY_FILES
   TRY_FILES_COUNT = 3;
@@ -36,6 +39,14 @@ void load_mock_config() {
   ALIASES[0].to = strdup("/var/www/stuff/");
   ALIASES[1].from = strdup("/images/");
   ALIASES[1].to = strdup("/var/www/stuff/images/tiger.jpeg");
+
+  // PROXIES
+  PROXIES_COUNT = 2;
+  PROXIES = malloc(sizeof(Proxy) * PROXIES_COUNT);
+  PROXIES[0].from = strdup("/api/");
+  PROXIES[0].to = strdup("http://httpbin.org/");
+  PROXIES[1].from = strdup("/status/");
+  PROXIES[1].to = strdup("http://localhost:5050/");
 }
 
 void free_mock_config() {
@@ -51,4 +62,11 @@ void free_mock_config() {
     free(ALIASES[i].to);
   }
   free(ALIASES);
+
+  // PROXIES
+  for (size_t i = 0; i < PROXIES_COUNT; i++) {
+    free(PROXIES[i].from);
+    free(PROXIES[i].to);
+  }
+  free(PROXIES);
 }

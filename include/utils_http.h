@@ -47,6 +47,7 @@ char *http_date_now();
 char *http_last_modified(const char *path);
 void trim_crlf(char *line);
 HttpRequest *parse_request(const char *raw_request);
+HttpResponse *parse_response(const char *raw_response);
 void free_response(HttpResponse *response);
 void free_request(HttpRequest *request);
 
