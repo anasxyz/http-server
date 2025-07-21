@@ -1,14 +1,31 @@
 #ifndef config_h
 #define config_h
 
-#include "route.h"
+#include <stddef.h>
 
-extern int SERVER_PORT;
-extern char* WEB_ROOT;
-extern Route *routes;
-extern size_t num_routes;
+typedef struct {
+  char* from; // request prefix like "/images/"
+  char* to; // file path like "/var/www/stuff/images/"
+} Alias;
 
-void load_config(const char *filename);
-void free_config();
+typedef struct {
+  char *from;  // request prefix like "/api/"
+  char *to;    // backend base URL like "http://localhost:5000/"
+} Proxy;
+
+extern int PORT;
+extern char* ROOT;
+
+extern char **TRY_FILES;
+extern size_t TRY_FILES_COUNT;
+
+extern Alias *ALIASES;
+extern size_t ALIASES_COUNT;
+
+extern Proxy *PROXIES;
+extern size_t PROXIES_COUNT;
+
+void load_mock_config();
+void free_mock_config();
 
 #endif /* config_h */

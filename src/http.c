@@ -1,5 +1,7 @@
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <linux/limits.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -9,142 +11,176 @@
 #include <unistd.h>
 
 #include "../include/config.h"
-
-#include "../include/file_handler.h"
 #include "../include/http.h"
 #include "../include/proxy.h"
-#include "../include/route.h"
-#include "../include/utils_general.h"
+#include "../include/utils_file.h"
 #include "../include/utils_http.h"
 #include "../include/utils_path.h"
 
-HttpResponse *create_response(int status_code, char *path) {
+// set headers
+Header headers[] = {{"Date", ""},          {"Server", ""},
+                    {"Last-Modified", ""}, {"Content-Length", ""},
+                    {"Content-Type", ""},  {"Connection", ""}};
+
+HttpResponse *create_response(int status_code) {
   HttpResponse *response = malloc(sizeof(HttpResponse));
-  if (!response) {
-    perror("Failed to allocate memory for response");
+  if (!response)
     return NULL;
+
+  // set status line
+  response->status_line.http_version = strdup("HTTP/1.1");
+  response->status_line.status_code = status_code;
+  response->status_line.status_reason =
+      strdup(get_status_reason(response->status_line.status_code));
+
+  size_t header_count = sizeof(headers) / sizeof(Header);
+  response->headers = malloc(sizeof(Header) * header_count);
+  response->header_count = header_count;
+  for (size_t i = 0; i < header_count; i++) {
+    response->headers[i].key = strdup(headers[i].key);
+    response->headers[i].value = strdup(headers[i].value);
   }
 
-  char *body = NULL;
-  size_t body_length = 0;
-  char *content_type = NULL;
-  char* prepared_path = NULL;
+  if (status_code >= 400) {
+    char error_file[256];
+    snprintf(error_file, sizeof(error_file), "/%d.html", status_code);
+    char *error_path = join_paths(ROOT, error_file);
 
-  if (path) {
-    prepared_path = path_pipeline(path);
-    if (prepared_path) {
-      FILE *file = get_file(prepared_path);
-      content_type = get_mime_type(prepared_path);
-      if (file) {
-        body = read_file(file, &body_length);
-      } else {
-        status_code = 500;
-      }
-    } else {
-      status_code = 404;
-    }
+    size_t error_size = 0;
+    response->body = get_body_from_file(error_path, &error_size);
+    response->body_length = error_size;
+
+    free(error_path);
   } else {
-    status_code = 500;
+    response->body = NULL;
+    response->body_length = 0;
   }
-
-  // if file loading failed, fallback to simple HTML message
-  if (!body) {
-    char fallback_path[PATH_MAX];
-    snprintf(fallback_path, sizeof(fallback_path), "%s/%d.html", WEB_ROOT, status_code);
-    FILE *fallback_file = get_file(fallback_path);
-
-    if (fallback_file) {
-      body = read_file(fallback_file, &body_length);
-      content_type = get_mime_type(fallback_path);
-    } else {
-      const char *reason = get_status_reason(status_code);
-      body = strdup_printf("<h1>%d %s</h1>", status_code, reason);
-      body_length = strlen(body);
-      content_type = "text/html";
-    }
-  }
-
-  response->status = strdup_printf("HTTP/1.1 %d %s", status_code, get_status_reason(status_code));
-  response->body = body;
-  response->body_length = body_length;
-  response->content_type = strdup(content_type);
-  response->connection = strdup("close");
-  response->date = http_date_now();
-  response->last_modified = http_last_modified(prepared_path ? prepared_path : path);
-  if (!response->last_modified)
-    response->last_modified = strdup(response->date); // fallback
-  response->server = strdup("http-server");
-  response->headers = NULL;
-  response->num_headers = 0;
-
-  if (prepared_path)
-    free(prepared_path);
 
   return response;
 }
 
-// sends HTTP response
-void send_response(int socket, HttpResponse *response) {
-  char header[512];
-  snprintf(header, sizeof(header),
-           "%s\r\n"
-           "Date: %s\r\n"
-           "Server: %s\r\n"
-           "Last-Modified: %s\r\n"
-           "Content-Length: %lu\r\n"
-           "Content-Type: %s\r\n"
-           "Connection: %s\r\n"
-           "\r\n",
-           response->status, response->date, response->server,
-           response->last_modified, response->body_length,
-           response->content_type, response->connection);
-
-  write(socket, header, strlen(header));
-  write(socket, response->body, response->body_length);
-
-  printf("======== SENT RESPONSE ========\n");
-  printf("Status: %s\n", response->status);
-  printf("Date: %s\n", response->date);
-  printf("Server: %s\n", response->server);
-  printf("Last-Modified: %s\n", response->last_modified);
-  printf("Content-Type: %s\n", response->content_type);
-  printf("Content-Length: %lu\n", response->body_length);
-  printf("Connection: %s\n", response->connection);
-  printf("==============================\n");
-}
-
+/*
 HttpResponse *handle_get(HttpRequest *request, void *context) {
-  Route *matched = (Route *)context;
-  if (matched) {
-    char *trimmed_path = trim_prefix(request->path, matched->prefix);
-    char full_backend_path[1024];
-    snprintf(full_backend_path, sizeof(full_backend_path), "%s/%s",
-             matched->backend_path, trimmed_path);
-    char *normalised_path = clean_path(full_backend_path);
-    request->path = normalised_path;
+  // not yet
+  return NULL;
+}
 
-    printf("Proxying GET: matched route prefix=%s, backend=%s:%d, path=%s\n",
-           matched->prefix, matched->host, matched->port, request->path);
+HttpResponse *handle_post(HttpRequest *request, void *context) {
+  // not yet
+  return NULL;
+}
+*/
 
-    HttpResponse *response =
-        proxy_to_backend(*request, matched->host, matched->port);
-    if (!response) {
-      return create_response(500, NULL);
-    }
-    free(trimmed_path);
-    free(normalised_path);
-    return response;
-  } else {
-    return create_response(200, request->path); // static file fallback
+// serialise response to string.
+// include_body: whether to include the body in the response.
+char *serialise_response(HttpResponse *response) {
+  int size = 1024 + (response->header_count * 128);
+  char *buffer = malloc(size);
+  if (!buffer)
+    return NULL;
+
+  int offset = snprintf(
+      buffer, size, "%s %d %s\r\n", response->status_line.http_version,
+      response->status_line.status_code, response->status_line.status_reason);
+
+  for (size_t i = 0; i < response->header_count; i++) {
+    offset += snprintf(buffer + offset, size - offset, "%s: %s\r\n",
+                       response->headers[i].key, response->headers[i].value);
   }
+
+  offset += snprintf(buffer + offset, size - offset, "\r\n");
+  return buffer;
 }
 
-HttpResponse *handle_post(HttpRequest *req, void *ctx) {
-  // TODO: implement POST handling basically proxy POST or process form
-  // submissions respond with 501 Not Implemented for now
-  return create_response(501, NULL);
+void handle_request(int socket, char *request_buffer) {
+  HttpRequest *request = NULL;
+  HttpResponse *response = NULL;
+  char *http_str = NULL;
+  char *raw_path = NULL;
+  char *resolved_path = NULL;
+
+  request = parse_request(request_buffer);
+  if (!request) {
+    response = create_response(400);
+    goto send;
+  }
+
+  // --- proxy handling ---
+  Proxy *proxy = find_proxy_for_path(request->request_line.path);
+  if (proxy) {
+    response = proxy_request(proxy, request_buffer);
+    if (!response) {
+      response = create_response(502);
+    }
+    goto send;
+  }
+
+  // --- static file handling ---
+  // check for alias matches
+  raw_path = check_for_alias_match(request->request_line.path);
+  if (!raw_path) {
+    response = create_response(404);
+    goto send;
+  }
+
+  // try paths from try_files in config
+  resolved_path = try_paths(raw_path);
+  free(raw_path);
+
+  if (!resolved_path) {
+    response = create_response(404);
+    goto send;
+  }
+
+  // --- fill response ---
+  size_t body_length = 0;
+  char *body = get_body_from_file(resolved_path, &body_length);
+  if (!body) {
+    response = create_response(404);
+    goto send;
+  }
+
+  // set body and body length
+  response = create_response(200);
+  response->body = body;
+  response->body_length = body_length;
+
+  // set content type
+  const char *mime_type = get_mime_type(resolved_path);
+  set_header(response, "Content-Type", mime_type);
+
+  // set content length
+  char len_buffer[32];
+  snprintf(len_buffer, sizeof(len_buffer), "%zu", body_length);
+  set_header(response, "Content-Length", len_buffer);
+
+  // set connection
+  set_header(response, "Connection", "close");
+
+send:
+  if (response) {
+    http_str = serialise_response(response);
+    if (http_str) {
+      send(socket, http_str, strlen(http_str), 0);
+
+      // send binary body separately
+      if (response->body && response->body_length > 0) {
+        send(socket, response->body, response->body_length, 0);
+      }
+    }
+  }
+
+  if (http_str)
+    free(http_str);
+  if (resolved_path)
+    free(resolved_path);
+  if (request)
+    free_request(request);
+  if (response)
+    free_response(response);
 }
 
+/*
 void handle_request(int socket, char *request_buffer) {
   HttpRequest request = parse_request(request_buffer);
   if (!request.method || !request.path || !request.version) {
@@ -186,3 +222,4 @@ void handle_request(int socket, char *request_buffer) {
     free_response(response);
   }
 }
+*/

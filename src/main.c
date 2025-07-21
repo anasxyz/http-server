@@ -1,19 +1,19 @@
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <pthread.h>
 
 #include "../include/config.h"
 
-#include "../include/server.h"
 #include "../include/client.h"
+#include "../include/server.h"
 
-void handle_sigint(int sig) {
-    printf("\nCaught SIGINT, cleaning up...\n");
-    free_config();
-    exit(0);
+void handle_sigint() {
+  printf("\nCaught SIGINT, cleaning up...\n");
+  free_mock_config();
+  exit(0);
 }
 
 void launch(struct Server *server) {
@@ -29,7 +29,7 @@ void launch(struct Server *server) {
 
     if (new_socket < 0) {
       perror("Failed to accept connection...\n");
-      continue; 
+      continue;
     }
 
     struct Client *client = malloc(sizeof(struct Client));
@@ -49,11 +49,14 @@ void launch(struct Server *server) {
 int main() {
   signal(SIGINT, handle_sigint);
 
-  load_config("server.conf");
+  // load_config("server.conf");
+  load_mock_config();
 
-  struct Server server = server_constructor(AF_INET, SOCK_STREAM, 0, INADDR_ANY, SERVER_PORT, 10, launch);
+  struct Server server =
+      server_constructor(AF_INET, SOCK_STREAM, 0, INADDR_ANY, PORT, 10, launch);
 
   server.launch(&server);
 
-  free_config();
+  // free_config();
+  free_mock_config();
 }

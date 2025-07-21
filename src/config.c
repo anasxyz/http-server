@@ -1,141 +1,67 @@
-#include "../include/config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "../include/utils_path.h"
+#include "../include/config.h"
 
 // default values
-int SERVER_PORT;
-char *WEB_ROOT = NULL;
-Route *routes = NULL;
-size_t num_routes = 0;
+int PORT = 8080;
+char *ROOT = "/var/www/";
 
-void load_config(const char *filename) {
-  FILE *f = fopen(filename, "r");
-  if (!f) {
-    perror("Could not open config file");
-    return;
-  }
+char **TRY_FILES;
+size_t TRY_FILES_COUNT = 0;
 
-  char line[512];
-  size_t route_capacity = 4;
-  routes = malloc(sizeof(Route) * route_capacity);
-  if (!routes) {
-    perror("Failed to allocate initial routes");
-    fclose(f);
-    exit(1);
-  }
+Alias *ALIASES = NULL;
+size_t ALIASES_COUNT = 0;
 
-  while (fgets(line, sizeof(line), f)) {
-    char *eq = strchr(line, '=');
-    if (!eq)
-      continue;
+Proxy *PROXIES = NULL;
+size_t PROXIES_COUNT = 0;
 
-    *eq = '\0';
-    char *key = line;
-    char *value = eq + 1;
+void load_mock_config() {
+  // TRY_FILES
+  TRY_FILES_COUNT = 3;
+  TRY_FILES = malloc(sizeof(char*) * TRY_FILES_COUNT);
+  if (!TRY_FILES) return;
+  TRY_FILES[0] = strdup("index.htm");
+  TRY_FILES[1] = strdup("index.html");
+  TRY_FILES[2] = strdup("404.html");
 
-    // Trim newline/whitespace
-    key[strcspn(key, "\r\n")] = '\0';
-    value[strcspn(value, "\r\n")] = '\0';
+  // ALIASES
+  ALIASES_COUNT = 2;
+  ALIASES = malloc(sizeof(Alias) * ALIASES_COUNT);
+  if (!ALIASES) return;
+  ALIASES[0].from = strdup("/stuff/");
+  ALIASES[0].to = strdup("/var/www/stuff/");
+  ALIASES[1].from = strdup("/images/");
+  ALIASES[1].to = strdup("/var/www/stuff/images/tiger.jpeg");
 
-    if (strcmp(key, "SERVER_PORT") == 0) {
-      SERVER_PORT = atoi(value);
-    } else if (strcmp(key, "WEB_ROOT") == 0) {
-      if (value[0] == '/') value++;
-      WEB_ROOT = strdup(value); 
-    } else if (strcmp(key, "ROUTE") == 0) {
-      // Expected format: /prefix/,URL=http://host[:port][/backend_path/]
-      char *comma = strchr(value, ',');
-      if (!comma)
-        continue;
-
-      *comma = '\0';
-      char *prefix = clean_path(value);
-      char *url_part = comma + 1;
-
-      if (strncmp(url_part, "URL=http://", 11) != 0)
-        continue;
-
-      char *url = url_part + 11; // After "http://"
-      char *host_start = url;
-
-      // Look for path (first slash after host[:port])
-      char *path_start = strchr(host_start, '/');
-      char *host_port = NULL;
-      if (path_start) {
-        host_port = strndup(host_start, path_start - host_start);
-      } else {
-        host_port = strdup(host_start);
-      }
-
-      // Separate host and port
-      char *port_start = strchr(host_port, ':');
-      char *host = NULL;
-      int port = 80; // Default
-
-      if (port_start) {
-        *port_start = '\0';
-        host = strdup(host_port);
-        port = atoi(port_start + 1);
-      } else {
-        host = strdup(host_port);
-      }
-      free(host_port);
-
-      // backend path
-      char *backend_path = path_start ? strdup(path_start) : strdup("/");
-
-      // Resize if needed
-      if (num_routes >= route_capacity) {
-        route_capacity *= 2;
-        routes = realloc(routes, sizeof(Route) * route_capacity);
-        if (!routes) {
-          perror("Failed to realloc routes");
-          fclose(f);
-          exit(1);
-        }
-      }
-
-      routes[num_routes].prefix = strdup(prefix);
-      routes[num_routes].host = host;
-      routes[num_routes].port = port;
-      routes[num_routes].backend_path = backend_path;
-      num_routes++;
-
-      // free memory
-      free(prefix);
-    }
-  }
-
-  fclose(f);
-
-  // Debug print
-  printf("=== Loaded Config ===\n");
-  printf("PORT = %d | ROOT = %s\n", SERVER_PORT, WEB_ROOT);
-  printf("Routes (%zu):\n", num_routes);
-  for (size_t i = 0; i < num_routes; i++) {
-    printf("  [%zu] prefix='%s', host='%s', port=%d, backend_path='%s'\n",
-           i + 1, routes[i].prefix, routes[i].host, routes[i].port,
-           routes[i].backend_path);
-  }
-  printf("=====================\n");
+  // PROXIES
+  PROXIES_COUNT = 2;
+  PROXIES = malloc(sizeof(Proxy) * PROXIES_COUNT);
+  PROXIES[0].from = strdup("/api/");
+  PROXIES[0].to = strdup("http://httpbin.org/");
+  PROXIES[1].from = strdup("/status/");
+  PROXIES[1].to = strdup("http://localhost:5050/");
 }
 
-void free_config() {
-  if (WEB_ROOT) {
-    free(WEB_ROOT);
-    WEB_ROOT = NULL;
+void free_mock_config() {
+  // TRY_FILES
+  for (size_t i = 0; i < TRY_FILES_COUNT; i++) {
+    free(TRY_FILES[i]);
   }
+  free(TRY_FILES);
 
-  for (size_t i = 0; i < num_routes; i++) {
-    free(routes[i].prefix);
-    free(routes[i].host);
-    free(routes[i].backend_path);
+  // ALIASES
+  for (size_t i = 0; i < ALIASES_COUNT; i++) {
+    free(ALIASES[i].from);
+    free(ALIASES[i].to);
   }
+  free(ALIASES);
 
-  free(routes);
-  routes = NULL;
-  num_routes = 0;
+  // PROXIES
+  for (size_t i = 0; i < PROXIES_COUNT; i++) {
+    free(PROXIES[i].from);
+    free(PROXIES[i].to);
+  }
+  free(PROXIES);
 }
