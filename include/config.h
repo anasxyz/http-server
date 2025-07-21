@@ -5,7 +5,9 @@
 
 extern int PORT;
 extern char* ROOT;
-extern Route *routes;
-extern size_t num_routes;
+extern Route* ROUTES;
+extern size_t ROUTES_COUNT;
+extern char* TRY_FILES[];
+extern int TRY_FILES_COUNT;
 
 #endif /* config_h */

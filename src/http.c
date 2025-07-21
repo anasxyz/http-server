@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "../include/config.h"
 #include "../include/utils_file.h"
 #include "../include/utils_path.h"
 #include "../include/http.h"
@@ -90,12 +91,12 @@ char *serialise_response(HttpResponse *response, bool include_body) {
 }
 
 char* try_paths(const char* path) {
-  char* resolved = NULL;
-  char* file_path = NULL;
-
   if (!path) return NULL;
 
-  // 1. Direct file (not dir)
+  char* resolved = NULL;
+
+  // 1. Try the exact path directly (file or dir)
+  printf("Trying exact path: %s\n", path);
   resolved = realpath(path, NULL);
   if (resolved && !is_dir(path)) {
     char* result = strdup(resolved);
@@ -104,44 +105,45 @@ char* try_paths(const char* path) {
   }
   free(resolved);
 
-  // 2. path/index.html if it's a dir
-  resolved = realpath(path, NULL);
-  if (resolved && is_dir(path)) {
-    file_path = join_paths(path, "index.html");
-    free(resolved);
+  // 2. If it's a directory, try known fallback files (like index.html, etc.)
+  if (is_dir(path)) {
+    size_t try_count = TRY_FILES_COUNT;
 
-    resolved = realpath(file_path, NULL);
-    if (resolved) {
-      char* result = strdup(resolved);
+    for (size_t i = 0; i < try_count; i++) {
+      char *candidate = join_paths(path, TRY_FILES[i]);
+      printf("Trying fallback: %s\n", candidate);
+
+      resolved = realpath(candidate, NULL);
+      if (resolved) {
+        char* result = strdup(resolved);
+        free(resolved);
+        free(candidate);
+        return result;
+      }
+      free(candidate);
       free(resolved);
-      free(file_path);
-      return result;
     }
-    free(resolved);
-    free(file_path);
-    file_path = NULL;
-  } else {
-    free(resolved);
   }
 
-  // 3. path.html
+  // 3. If it's not a directory, try adding .html extension
   if (!is_dir(path)) {
     size_t len = strlen(path);
-    file_path = malloc(len + 6); // ".html" + '\0'
-    if (!file_path) return NULL;
+    char *html_path = malloc(len + 6); // +5 for ".html" +1 for '\0'
+    if (!html_path) return NULL;
 
-    strcpy(file_path, path);
-    strcat(file_path, ".html");
+    strcpy(html_path, path);
+    strcat(html_path, ".html");
+    printf("Trying .html fallback: %s\n", html_path);
 
-    resolved = realpath(file_path, NULL);
+    resolved = realpath(html_path, NULL);
     if (resolved) {
       char* result = strdup(resolved);
       free(resolved);
-      free(file_path);
+      free(html_path);
       return result;
     }
+    free(html_path);
     free(resolved);
-    free(file_path);
   }
 
   return NULL;
