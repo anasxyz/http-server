@@ -1,3 +1,4 @@
+
 # http-server
 
 **A lightweight HTTP web server written from scratch in C**
@@ -6,27 +7,27 @@
 
 ## Features
 
-- [ ] Configurable server
-- [ ] Static file serving with MIME type support  
-- [ ] Basic proxying to upstream backend servers  
-- [ ] Configurable routing with fallback files  
-- [ ] Support for custom error pages  
-- [ ] URL rewriting and redirection  
-- [ ] Access control for hidden files and directories  
-- [ ] Logging (access and error logs)  
-- [ ] HTTP connection management (keep-alive, timeouts)  
-- [ ] Basic support for compression (gzip)
+- [ ] Full implementation of the HTTP protocol.
+- [x] Static file serving with full MIME type support and directory indexing.
+- [x] Basic routing engine supporting URL rewriting and redirection, custom error pages, fallback files, and aliasing.
+- [x] Basic reverse proxying to upstream backend servers.  
+- [ ] Security features including access control, hidden file protection, IP address filtering, and support for HTTPS/TLS encryption.
+- [ ] HTTP/1.1 and HTTP/2 support with keep-alive connection management, pipelining, and request multiplexing.
+- [ ] Compression support with gzip and brotli to optimise bandwidth usage.
+- [ ] Basic Logging and monitoring with customisable access and error logs.
+- [ ] Modular and extensible architecture with support for custom plugins and extensions.
+- [ ] Configurable rate limiting and connection throttling to protect against DDoS attacks.
+- [ ] Easy to use configuration system with flexible syntax supporting environment variables and dynamic reloads.
 
 ## Installation / Build Instructions
 
 Step-by-step instructions for compiling and installing the server.
 
 ```
-git clone https://github.com/anasxyz/http-server.git
-cd http-server
-make
+$ git clone https://github.com/anasxyz/http-server.git
+$ cd http-server
+$ make
 ```
-
 
 ## Usage
 
@@ -39,15 +40,38 @@ make
 Example `server.conf`:
 
 ```conf
+# Server settings
 port 8080
 root /var/www/
-alias /images/ /var/www/stuff/assets/images/
-try_files /index.html /index.htm /homepage.html
+
+# Static file handling
+index /index.html /index.htm
+try_files $uri $uri/ /404.html
+
+# URL mappings
+alias /images/ /var/www/assets/images/
+alias /docs/ /var/www/manuals/
+
+# Reverse proxy
+proxy /api/ http://localhost:5050/
+proxy /external/ http://localhost:5050/page/hello
+proxy /other/ http://example.com/
+
 ```
 -   `port`: The TCP port on which the server listens for incoming HTTP connections.
-    
--   `root`: The root directory where your static files are served from. If not specified in the configuration file, the default root directory will be set to ```/var/www/```
-    
+
+-   `root`: The root directory where your static files are served from. If not specified in the configuration file, the default root directory will be set to `/var/www/`
+
+- `index`: List of index files to serve when a directory is requested (e.g. `/index.html`, `/index.htm`).
+
+-   `try_files`: Specifies a list of fallback files to try serving if the requested path does not exist.
+	- `$uri`: Serve requested URI directly.
+	- `$uri/`: Serve requested but treated as a directory.
+	- Any remaining paths (e.g. `/404.html`) are treated as fallback files if the previous options fail.
+
 -   `alias`: Maps a URL prefix (e.g., `/images/`) to a different directory on your filesystem.
-    
--   `try_files`: Specifies a list of fallback files to try serving if the requested path does not exist. Unlike other servers' equivalent implementation of this configuration option, this server automatically tries the requested file directly first, so you only need to list fallback options.
+
+- `proxy`: Forwards requests to an upstream server. You can rewrite the target path:
+	- `proxy /api/ http://localhost:5050/` → `/api/foo` becomes `/foo` on upstream server.
+	- `proxy /external/ http://localhost:5050/page/hello` → `/external/test` becomes `/page/hello/test`.
+
