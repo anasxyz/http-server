@@ -92,55 +92,34 @@ char *serialise_response(HttpResponse *response) {
   return buffer;
 }
 
-void handle_request(int socket, char *request_buffer) {
-  HttpRequest *request = NULL;
-  HttpResponse *response = NULL;
-  char *http_str = NULL;
+HttpResponse *handle_get(HttpRequest *request, void *context) {
   char *raw_path = NULL;
   char *resolved_path = NULL;
-
-  request = parse_request(request_buffer);
-  if (!request) {
-    response = create_response(400);
-    goto send;
-  }
-
-  // --- proxy handling ---
-  Proxy *proxy = find_proxy_for_path(request->request_line.path);
-  if (proxy) {
-    response = proxy_request(proxy, request_buffer);
-    if (!response) {
-      response = create_response(502);
-    }
-    goto send;
-  }
+  HttpResponse *response = NULL;
 
   // --- static file handling ---
   // check for alias matches
   raw_path = check_for_alias_match(request->request_line.path);
   if (!raw_path) {
-    response = create_response(404);
-    goto send;
+    // no alias match found
+    return create_response(500);
   }
 
   // try paths from try_files in config
   resolved_path = try_paths(raw_path);
   free(raw_path);
-
   if (!resolved_path) {
-    response = create_response(404);
-    goto send;
+    return create_response(404);
   }
 
   // --- fill response ---
   size_t body_length = 0;
   char *body = get_body_from_file(resolved_path, &body_length);
   if (!body) {
-    response = create_response(404);
-    goto send;
+    free(resolved_path);
+    return create_response(404);
   }
 
-  // set body and body length
   response = create_response(200);
   response->body = body;
   response->body_length = body_length;
@@ -157,6 +136,66 @@ void handle_request(int socket, char *request_buffer) {
   // set connection
   set_header(response, "Connection", "close");
 
+  free(resolved_path);
+
+  return response;
+}
+
+
+void handle_request(int socket, char *request_buffer) {
+  HttpRequest *request = NULL;
+  HttpResponse *response = NULL;
+  char *http_str = NULL;
+
+  request = parse_request(request_buffer);
+  if (!request) {
+    response = create_response(400); // bad request
+    goto send;
+  }
+
+  // --- proxy handling ---
+  // if proxy rule matches, delegate to proxy rule
+  // this happens before method specific handling
+  Proxy *proxy = find_proxy_for_path(request->request_line.path);
+  if (proxy) {
+    response = proxy_request(proxy, request_buffer);
+    if (!response) {
+      response = create_response(502); // bad gateway
+    }
+    goto send;
+  }
+
+  // --- method specific handling ---
+  // if no proxy rule matches, handle methods internally
+  MethodHandler handlers[] = {
+      {"GET", handle_get, NULL},
+      {"POST", NULL, NULL},
+  };
+
+  int num_handlers = sizeof(handlers) / sizeof(handlers[0]);
+  int handler_found = 0;
+  for (int i = 0; i < num_handlers; i++) {
+    if (strcmp(request->request_line.method, handlers[i].method) == 0) {
+      response = handlers[i].handler(request, handlers[i].context);
+      handler_found = 1;
+      break;
+    }
+  }
+
+  if (!handler_found) {
+    // if no handler found for method, and it wasn't proxied
+    response = create_response(405); // method not allowed
+    goto send;
+  }
+
+  // if handlder returns NULL it means it failed to handle the request
+  // the handler itself should have created an appropriate response
+  // if it returns NULL here then it implies an unhandled internal error
+  if (!response) {
+    response = create_response(500); // internal server error
+    goto send;
+  }
+
 send:
   if (response) {
     http_str = serialise_response(response);
@@ -167,13 +206,16 @@ send:
       if (response->body && response->body_length > 0) {
         send(socket, response->body, response->body_length, 0);
       }
+    } else {
+      // failed to serialise response, send raw 500 response
+      const char* internal_error_response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
+      send(socket, internal_error_response, strlen(internal_error_response), 0);
     }
   }
 
+  // free resources
   if (http_str)
     free(http_str);
-  if (resolved_path)
-    free(resolved_path);
   if (request)
     free_request(request);
   if (response)
