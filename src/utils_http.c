@@ -6,70 +6,77 @@
 #include <sys/stat.h>
 #include <time.h>
 
-#include "../include/utils_http.h"
 #include "../include/config.h"
 #include "../include/utils_file.h"
+#include "../include/utils_http.h"
 #include "../include/utils_path.h"
 
 #define MAX_HEADERS 100
 #define MAX_PATH 1024
 
-char *try_paths(const char *path) {
-  if (!path)
+char *try_paths(const char *request_path) {
+  if (!request_path)
     return NULL;
 
   char *resolved = NULL;
 
-  // try the exact path directly (file or dir)
-  printf("Trying exact path: %s\n", path);
-  resolved = realpath(path, NULL);
-  if (resolved && !is_dir(path)) {
-    char *result = strdup(resolved);
-    free(resolved);
-    return result;
-  }
-  free(resolved);
+  for (size_t i = 0; i < TRY_FILES_COUNT; i++) {
+    const char *rule = TRY_FILES[i];
 
-  // if directory try known fallback files from config
-  if (is_dir(path)) {
-    size_t try_count = TRY_FILES_COUNT;
+    // --- Case 1: $uri ---
+    if (strcmp(rule, "$uri") == 0) {
+      printf("Trying $uri: %s\n", request_path);
+      resolved = realpath(request_path, NULL);
+      if (resolved && !is_dir(request_path)) {
+        char *result = strdup(resolved);
+        free(resolved);
+        return result;
+      }
+      free(resolved);
+    }
 
-    for (size_t i = 0; i < try_count; i++) {
-      char *candidate = join_paths(path, TRY_FILES[i]);
-      printf("Trying fallback: %s\n", candidate);
+    // --- Case 2: $uri/ ---
+    else if (strcmp(rule, "$uri/") == 0) {
+      if (is_dir(request_path)) {
+        for (size_t j = 0; j < INDEX_FILES_COUNT; j++) {
+          char *candidate = join_paths(request_path, INDEX_FILES[j]);
+          printf("Trying $uri/ index: %s\n", candidate);
+          resolved = realpath(candidate, NULL);
+          if (resolved) {
+            char *result = strdup(resolved);
+            free(resolved);
+            free(candidate);
+            return result;
+          }
+          free(candidate);
+          free(resolved);
+        }
+      }
+    }
 
-      resolved = realpath(candidate, NULL);
+    // --- Case 3: Fallback file (e.g., /fallback.html) ---
+    else {
+      char *fallback_path = NULL;
+
+      // If fallback rule starts with '/', join it with ROOT (strip leading '/')
+      if (rule[0] == '/') {
+        // remove leading '/'
+        fallback_path = join_paths(ROOT, rule + 1);
+      } else {
+        fallback_path = join_paths(ROOT, rule);
+      }
+
+      printf("Trying fallback file with root: %s\n", fallback_path);
+      resolved = realpath(fallback_path, NULL);
+      free(fallback_path);
+
       if (resolved) {
         char *result = strdup(resolved);
         free(resolved);
-        free(candidate);
         return result;
       }
-      free(candidate);
       free(resolved);
     }
-  }
-
-  // if not directory try adding .html extension
-  if (!is_dir(path)) {
-    size_t len = strlen(path);
-    char *html_path = malloc(len + 6); // +5 for ".html" +1 for '\0'
-    if (!html_path)
-      return NULL;
-
-    strcpy(html_path, path);
-    strcat(html_path, ".html");
-    printf("Trying .html fallback: %s\n", html_path);
-
-    resolved = realpath(html_path, NULL);
-    if (resolved) {
-      char *result = strdup(resolved);
-      free(resolved);
-      free(html_path);
-      return result;
-    }
-    free(html_path);
-    free(resolved);
   }
 
   return NULL;
@@ -362,14 +369,13 @@ HttpResponse *parse_response(const char *raw_response) {
   const char *ptr = raw_response;
   const char *line_end;
 
-  // 1. Parse status line: "HTTP/1.1 200 OK\r\n"
+  // 1. Parse status line
   line_end = strstr(ptr, "\r\n");
   if (!line_end) {
     free(response);
     return NULL;
   }
 
-  // Copy status line into buffer for tokenizing
   size_t status_line_len = line_end - ptr;
   char *status_line = malloc(status_line_len + 1);
   if (!status_line) {
@@ -379,58 +385,40 @@ HttpResponse *parse_response(const char *raw_response) {
   memcpy(status_line, ptr, status_line_len);
   status_line[status_line_len] = '\0';
 
-  // Parse status line parts
   char *token = strtok(status_line, " ");
-  if (!token) {
-    free(status_line);
-    free(response);
-    return NULL;
-  }
+  if (!token) goto fail_status;
   response->status_line.http_version = strdup(token);
 
   token = strtok(NULL, " ");
-  if (!token) {
-    free(status_line);
-    free(response->status_line.http_version);
-    free(response);
-    return NULL;
-  }
+  if (!token) goto fail_status;
   response->status_line.status_code = atoi(token);
 
   token = strtok(NULL, "\r\n");
-  if (!token)
-    token = ""; // no reason phrase
-  response->status_line.status_reason = strdup(token);
+  response->status_line.status_reason = strdup(token ? token : "");
 
   free(status_line);
+  ptr = line_end + 2;
 
-  ptr = line_end + 2; // move past "\r\n"
-
-  // 2. Parse headers until empty line ("\r\n")
-  // Count headers first (optional but useful for allocation)
+  // 2. Parse headers
   size_t headers_capacity = 10;
   response->headers = malloc(sizeof(Header) * headers_capacity);
   response->header_count = 0;
 
   while (true) {
     line_end = strstr(ptr, "\r\n");
-    if (!line_end)
-      break; // malformed
+    if (!line_end) break;
 
     if (line_end == ptr) {
-      // Empty line: end of headers
-      ptr += 2;
+      ptr += 2; // blank line, end of headers
       break;
     }
 
     size_t line_len = line_end - ptr;
     char *header_line = malloc(line_len + 1);
-    if (!header_line)
-      break;
+    if (!header_line) break;
     memcpy(header_line, ptr, line_len);
     header_line[line_len] = '\0';
 
-    // Split header line at ':'
     char *colon = strchr(header_line, ':');
     if (!colon) {
       free(header_line);
@@ -440,16 +428,11 @@ HttpResponse *parse_response(const char *raw_response) {
     *colon = '\0';
     char *key = header_line;
     char *value = colon + 1;
+    while (isspace((unsigned char)*value)) value++;
 
-    // Trim whitespace from value start
-    while (isspace((unsigned char)*value))
-      value++;
-
-    // Add header to response
     if (response->header_count >= headers_capacity) {
       headers_capacity *= 2;
-      Header *tmp =
-          realloc(response->headers, sizeof(Header) * headers_capacity);
+      Header *tmp = realloc(response->headers, sizeof(Header) * headers_capacity);
       if (!tmp) {
         free(header_line);
         break;
@@ -465,14 +448,34 @@ HttpResponse *parse_response(const char *raw_response) {
     ptr = line_end + 2;
   }
 
-  // 3. Body is everything after the blank line
-  if (*ptr) {
-    response->body = strdup(ptr);
+  // 3. Parse body
+  const char *body_ptr = ptr;
+  size_t body_len = strlen(body_ptr);
+
+  // Check for Content-Length header
+  for (size_t i = 0; i < response->header_count; i++) {
+    if (strcasecmp(response->headers[i].key, "Content-Length") == 0) {
+      body_len = (size_t)atoi(response->headers[i].value);
+      break;
+    }
+  }
+
+  if (body_len > 0) {
+    response->body = malloc(body_len);
+    if (response->body)
+      memcpy((void *)response->body, body_ptr, body_len);
+    response->body_length = body_len;
   } else {
     response->body = NULL;
+    response->body_length = 0;
   }
 
   return response;
+
+fail_status:
+  free(status_line);
+  free(response);
+  return NULL;
 }
 
 void set_header(HttpResponse *res, const char *key, const char *val) {

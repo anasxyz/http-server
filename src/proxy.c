@@ -11,6 +11,7 @@
 #include "../include/config.h"
 #include "../include/proxy.h"
 #include "../include/utils_http.h"
+#include "../include/utils_path.h"
 
 #define DEFAULT_HTTP_PORT 80
 
@@ -105,8 +106,7 @@ char *strip_prefix(const char *path, const char *prefix) {
   return strdup(path); // no prefix match so just return original path copy
 }
 
-HttpResponse *proxy_request(Proxy *proxy,
-                            const char *original_request_str) {
+HttpResponse *proxy_request(Proxy *proxy, const char *original_request_str) {
   char host[256];
   int port = 0;
 
@@ -117,70 +117,65 @@ HttpResponse *proxy_request(Proxy *proxy,
 
   printf("Proxy forwarding to host: %s port: %d\n", host, port);
 
-  // modify the original request line to strip proxy prefix
-  // extract first line (which is request line) from original_request_str
+  // 1. Extract original request line
   const char *first_line_end = strstr(original_request_str, "\r\n");
-  if (!first_line_end) {
-    fprintf(stderr, "Invalid HTTP request string\n");
-    return NULL;
-  }
+  if (!first_line_end) return NULL;
 
   size_t first_line_len = first_line_end - original_request_str;
-  char *first_line = malloc(first_line_len + 1);
-  if (!first_line)
-    return NULL;
-  strncpy(first_line, original_request_str, first_line_len);
-  first_line[first_line_len] = '\0';
+  char *first_line = strndup(original_request_str, first_line_len);
+  if (!first_line) return NULL;
 
-  // parse request line METHOD PATH VERSION
   char method[16], path[1024], version[16];
   if (sscanf(first_line, "%15s %1023s %15s", method, path, version) != 3) {
-    fprintf(stderr, "Failed to parse request line\n");
     free(first_line);
     return NULL;
   }
   free(first_line);
 
-  // strip the proxy->from prefix from path
-  char *new_path = strip_prefix(path, proxy->from);
-  if (!new_path)
-    return NULL;
+  // 2. Strip proxy->from prefix
+  char *suffix = strip_prefix(path, proxy->from);
+  if (!suffix) return NULL;
 
-  if (new_path[0] != '/') {
-    // make sure new path starts with '/'
-    char *fixed_path = malloc(strlen(new_path) + 2);
-    if (!fixed_path) {
-      free(new_path);
-      return NULL;
-    }
-    fixed_path[0] = '/';
-    strcpy(fixed_path + 1, new_path);
-    free(new_path);
-    new_path = fixed_path;
+  // 3. Get base path from proxy->to
+  const char *base_path = "/";
+  const char *scheme_pos = strstr(proxy->to, "://");
+  if (scheme_pos) {
+    base_path = strchr(scheme_pos + 3, '/');
+    if (!base_path) base_path = "/";
   }
 
-  // build new request line string
-  char new_request_line[1152]; // enough buffer
-  snprintf(new_request_line, sizeof(new_request_line), "%s %s %s\r\n", method,
-           new_path, version);
-  free(new_path);
+  // 4. Join base path + suffix
+  char *full_path = join_paths(base_path, suffix);
+  free(suffix);
 
-  // build the modified request string so new_request_line + rest of
-  // original_request_str after first '\r\n'
-  const char *rest = first_line_end + 2; // skip \r\n
-  size_t rest_len = strlen(rest);
-  size_t new_request_len = strlen(new_request_line) + rest_len + 1;
+  // Ensure full_path starts with '/'
+  if (full_path[0] != '/') {
+    char *fixed = malloc(strlen(full_path) + 2);
+    if (!fixed) {
+      free(full_path);
+      return NULL;
+    }
+    fixed[0] = '/';
+    strcpy(fixed + 1, full_path);
+    free(full_path);
+    full_path = fixed;
+  }
 
-  char *modified_request_str = malloc(new_request_len);
-  if (!modified_request_str)
-    return NULL;
+  // 5. Build new request line
+  char new_request_line[1152];
+  snprintf(new_request_line, sizeof(new_request_line), "%s %s %s\r\n", method, full_path, version);
+  free(full_path);
+
+  // 6. Reconstruct modified request string
+  const char *rest = first_line_end + 2;
+  size_t new_len = strlen(new_request_line) + strlen(rest) + 1;
+  char *modified_request_str = malloc(new_len);
+  if (!modified_request_str) return NULL;
+
   strcpy(modified_request_str, new_request_line);
   strcat(modified_request_str, rest);
 
-  // now continue as before so just connect, send modified_request_str, and
-  // receive response
-
-  // resolve host
+  // 7. Connect to backend
   struct addrinfo hints = {0}, *res, *p;
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
@@ -188,51 +183,40 @@ HttpResponse *proxy_request(Proxy *proxy,
   char port_str[6];
   snprintf(port_str, sizeof(port_str), "%d", port);
 
-  int err = getaddrinfo(host, port_str, &hints, &res);
-  if (err != 0) {
-    fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(err));
+  if (getaddrinfo(host, port_str, &hints, &res) != 0) {
     free(modified_request_str);
     return NULL;
   }
 
   int sockfd = -1;
-  for (p = res; p != NULL; p = p->ai_next) {
+  for (p = res; p; p = p->ai_next) {
     sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-    if (sockfd == -1)
-      continue;
-
-    if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0)
-      break;
-
+    if (sockfd == -1) continue;
+    if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0) break;
     close(sockfd);
     sockfd = -1;
   }
   freeaddrinfo(res);
-
   if (sockfd == -1) {
-    perror("Could not connect to proxy target");
     free(modified_request_str);
     return NULL;
   }
 
+  // 8. Send request
   size_t len = strlen(modified_request_str);
   ssize_t sent = 0;
   while (sent < (ssize_t)len) {
     ssize_t n = send(sockfd, modified_request_str + sent, len - sent, 0);
     if (n <= 0) {
-      perror("send failed");
       close(sockfd);
       free(modified_request_str);
       return NULL;
     }
     sent += n;
   }
-
   free(modified_request_str);
 
-  // read response in chunks to prevent cutoffs because tcp can split into
-  // multiple packets VERY LONG STORY OKAY what's important is that this is
-  // fixed :D
+  // 9. Read response
   size_t bufsize = 8192;
   size_t offset = 0;
   char *buffer = malloc(bufsize);
@@ -257,14 +241,12 @@ HttpResponse *proxy_request(Proxy *proxy,
   }
 
   if (nread < 0) {
-    perror("recv failed");
     free(buffer);
     close(sockfd);
     return NULL;
   }
 
   close(sockfd);
-
   buffer[offset] = '\0';
 
   HttpResponse *response = parse_response(buffer);
