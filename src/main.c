@@ -12,7 +12,7 @@
 
 void handle_sigint() {
   printf("\nCaught SIGINT, cleaning up...\n");
-  free_mock_config();
+  free_config();
   exit(0);
 }
 
@@ -49,14 +49,12 @@ void launch(struct Server *server) {
 int main() {
   signal(SIGINT, handle_sigint);
 
-  // load_config("server.conf");
-  load_mock_config();
+  load_config("server.conf");
 
   struct Server server =
       server_constructor(AF_INET, SOCK_STREAM, 0, INADDR_ANY, PORT, 10, launch);
 
   server.launch(&server);
 
-  // free_config();
-  free_mock_config();
+  free_config();
 }
