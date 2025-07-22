@@ -8,6 +8,7 @@
 
 HttpResponse *create_response(int status_code);
 void handle_request(int socket, char *request);
+char *serialise_response(HttpResponse *response);
 HttpResponse *handle_get(HttpRequest *request, void *context);
 HttpResponse *handle_post(HttpRequest *request, void *context);
 

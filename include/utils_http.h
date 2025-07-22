@@ -52,6 +52,8 @@ void trim_crlf(char *line);
 HttpRequest* parse_request(const char *raw_request);
 HttpResponse* parse_response(const char *raw_response);
 void set_header(HttpResponse *response, const char *key, const char *value);
+const char* get_header(const HttpRequest *req, const char *key);
+const char* get_response_header(const HttpResponse *res, const char *key);
 void free_response(HttpResponse *response);
 void free_request(HttpRequest *request);
 

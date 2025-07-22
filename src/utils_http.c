@@ -488,6 +488,34 @@ void set_header(HttpResponse *res, const char *key, const char *val) {
   }
 }
 
+const char *get_header(const HttpRequest *req, const char *key) {
+    if (!req || !req->headers || !key) {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < req->header_count; i++) {
+        // Case-insensitive comparison is good practice for HTTP headers
+        // strcasecmp is POSIX, _stricmp for Windows, or implement your own.
+        // For simplicity, let's start with strcmp, but be aware.
+        if (strcmp(req->headers[i].key, key) == 0) {
+            return req->headers[i].value;
+        }
+    }
+    return NULL; // Header not found
+}
+
+const char *get_response_header(const HttpResponse *res, const char *key) {
+    if (!res || !res->headers || !key) {
+        return NULL;
+    }
+    for (size_t i = 0; i < res->header_count; i++) {
+        if (strcmp(res->headers[i].key, key) == 0) { // Consider strcasecmp for robustness
+            return res->headers[i].value;
+        }
+    }
+    return NULL;
+}
+
 void free_response(HttpResponse *response) {
   if (!response)
     return;

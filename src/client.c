@@ -1,3 +1,4 @@
+/*
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,3 +25,4 @@ void *handle_client(void *arg) {
   free(client);
   return NULL;
 }
+*/
