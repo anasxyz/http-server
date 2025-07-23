@@ -30,8 +30,7 @@ HttpResponse *create_response(int status_code) {
   // set status line
   response->status_line.http_version = strdup("HTTP/1.1");
   response->status_line.status_code = status_code;
-  response->status_line.status_reason =
-      strdup(get_status_reason(response->status_line.status_code));
+  response->status_line.status_reason = strdup(get_status_reason(response->status_line.status_code));
 
   size_t header_count = sizeof(headers) / sizeof(Header);
   response->headers = malloc(sizeof(Header) * header_count);
@@ -41,20 +40,8 @@ HttpResponse *create_response(int status_code) {
     response->headers[i].value = strdup(headers[i].value);
   }
 
-  if (status_code >= 400) {
-    char error_file[256];
-    snprintf(error_file, sizeof(error_file), "/%d.html", status_code);
-    char *error_path = join_paths(ROOT, error_file);
-
-    size_t error_size = 0;
-    response->body = get_body_from_file(error_path, &error_size);
-    response->body_length = error_size;
-
-    free(error_path);
-  } else {
-    response->body = NULL;
-    response->body_length = 0;
-  }
+  response->body = NULL;
+  response->body_length = 0;
 
   return response;
 }
