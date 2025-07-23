@@ -460,16 +460,6 @@ HttpResponse *parse_response(const char *raw_response) {
     }
   }
 
-  if (body_len > 0) {
-    response->body = malloc(body_len);
-    if (response->body)
-      memcpy((void *)response->body, body_ptr, body_len);
-    response->body_length = body_len;
-  } else {
-    response->body = NULL;
-    response->body_length = 0;
-  }
-
   return response;
 
 fail_status:
@@ -517,9 +507,6 @@ void free_response(HttpResponse *response) {
 
   // free body if allocated dynamically
   // important to only free body if memory is owned so prolly use strdup always
-  if (response->body) {
-    free((void *)response->body);
-  }
 
   free(response);
 }

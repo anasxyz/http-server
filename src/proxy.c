@@ -106,7 +106,7 @@ char *strip_prefix(const char *path, const char *prefix) {
   return strdup(path); // no prefix match so just return original path copy
 }
 
-HttpResponse *proxy_request(Proxy *proxy, const char *original_request_str) {
+ProxyResult *proxy_request(Proxy *proxy, const char *original_request_str) {
   char host[256];
   int port = 0;
 
@@ -117,7 +117,6 @@ HttpResponse *proxy_request(Proxy *proxy, const char *original_request_str) {
 
   printf("Proxy forwarding to host: %s port: %d\n", host, port);
 
-  // 1. Extract original request line
   const char *first_line_end = strstr(original_request_str, "\r\n");
   if (!first_line_end) return NULL;
 
@@ -132,11 +131,9 @@ HttpResponse *proxy_request(Proxy *proxy, const char *original_request_str) {
   }
   free(first_line);
 
-  // 2. Strip proxy->from prefix
   char *suffix = strip_prefix(path, proxy->from);
   if (!suffix) return NULL;
 
-  // 3. Get base path from proxy->to
   const char *base_path = "/";
   const char *scheme_pos = strstr(proxy->to, "://");
   if (scheme_pos) {
@@ -144,11 +141,9 @@ HttpResponse *proxy_request(Proxy *proxy, const char *original_request_str) {
     if (!base_path) base_path = "/";
   }
 
-  // 4. Join base path + suffix
   char *full_path = join_paths(base_path, suffix);
   free(suffix);
 
-  // Ensure full_path starts with '/'
   if (full_path[0] != '/') {
     char *fixed = malloc(strlen(full_path) + 2);
     if (!fixed) {
@@ -161,12 +156,10 @@ HttpResponse *proxy_request(Proxy *proxy, const char *original_request_str) {
     full_path = fixed;
   }
 
-  // 5. Build new request line
   char new_request_line[1152];
   snprintf(new_request_line, sizeof(new_request_line), "%s %s %s\r\n", method, full_path, version);
   free(full_path);
 
-  // 6. Reconstruct modified request string
   const char *rest = first_line_end + 2;
   size_t new_len = strlen(new_request_line) + strlen(rest) + 1;
   char *modified_request_str = malloc(new_len);
@@ -175,7 +168,6 @@ HttpResponse *proxy_request(Proxy *proxy, const char *original_request_str) {
   strcpy(modified_request_str, new_request_line);
   strcat(modified_request_str, rest);
 
-  // 7. Connect to backend
   struct addrinfo hints = {0}, *res, *p;
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
@@ -202,7 +194,6 @@ HttpResponse *proxy_request(Proxy *proxy, const char *original_request_str) {
     return NULL;
   }
 
-  // 8. Send request
   size_t len = strlen(modified_request_str);
   ssize_t sent = 0;
   while (sent < (ssize_t)len) {
@@ -216,7 +207,6 @@ HttpResponse *proxy_request(Proxy *proxy, const char *original_request_str) {
   }
   free(modified_request_str);
 
-  // 9. Read response
   size_t bufsize = 8192;
   size_t offset = 0;
   char *buffer = malloc(bufsize);
@@ -249,13 +239,42 @@ HttpResponse *proxy_request(Proxy *proxy, const char *original_request_str) {
   close(sockfd);
   buffer[offset] = '\0';
 
-  HttpResponse *response = parse_response(buffer);
-  free(buffer);
-
-  if (!response) {
-    fprintf(stderr, "Failed to parse proxy response\n");
+  // --- NEW: Split headers and body ---
+  const char *header_end = strstr(buffer, "\r\n\r\n");
+  if (!header_end) {
+    free(buffer);
     return NULL;
   }
 
-  return response;
+  size_t header_len = header_end - buffer + 4;
+  char *headers = malloc(header_len + 1);
+  if (!headers) {
+    free(buffer);
+    return NULL;
+  }
+  memcpy(headers, buffer, header_len);
+  headers[header_len] = '\0';
+
+  size_t body_len = offset - header_len;
+  char *body = malloc(body_len + 1);
+  if (!body) {
+    free(headers);
+    free(buffer);
+    return NULL;
+  }
+  memcpy(body, buffer + header_len, body_len);
+  body[body_len] = '\0';
+
+  free(buffer);
+
+  ProxyResult *result = malloc(sizeof(ProxyResult));
+  if (!result) {
+    free(headers);
+    free(body);
+    return NULL;
+  }
+
+  result->headers = headers;
+  result->body = body;
+  return result;
 }

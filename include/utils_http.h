@@ -18,8 +18,9 @@ typedef struct {
 typedef struct {
   HttpResponseStatusLine status_line;
   Header *headers;
-  const char* body;
-  size_t body_length;
+  int file_fd;
+  char* file_path;
+  size_t file_size;
   size_t header_count;
 } HttpResponse;
 
@@ -55,7 +56,7 @@ void set_header(HttpResponse *response, const char *key, const char *value);
 void free_response(HttpResponse *response);
 void free_request(HttpRequest *request);
 
-typedef HttpResponse *(*RequestHandler)(HttpRequest *, void *context);
+typedef HttpResponse *(*RequestHandler)(HttpRequest *);
 
 typedef struct {
   const char *method;
