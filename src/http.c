@@ -15,7 +15,6 @@
 #include "../include/config.h"
 #include "../include/http.h"
 #include "../include/proxy.h"
-#include "../include/utils_file.h"
 #include "../include/utils_http.h"
 #include "../include/utils_path.h"
 
@@ -32,6 +31,8 @@ HttpResponse *create_response(int status_code, char *path) {
   HttpResponse *response = malloc(sizeof(HttpResponse));
   if (!response)
     return NULL;
+
+  char* content_type = NULL;
 
   // set status line
   response->status_line.http_version = strdup("HTTP/1.1");
@@ -58,10 +59,9 @@ HttpResponse *create_response(int status_code, char *path) {
     // get error file size
     struct stat st;
     fstat(response->file_fd, &st);
-    off_t offset = 0;
     response->file_size = st.st_size;
 
-    return response;
+    content_type = get_mime_type(error_file_path);
   } else {
     // open file
     response->file_fd = open(path, O_RDONLY);
@@ -69,28 +69,30 @@ HttpResponse *create_response(int status_code, char *path) {
     // get file size
     struct stat st;
     fstat(response->file_fd, &st);
-    off_t offset = 0;
     response->file_size = st.st_size;
-
-    return response;
+    
+    content_type = get_mime_type(path);
   }
-}
 
-void get_file_info(HttpResponse *response) {
-  
-}
+  char content_length[32];
+  // convert size_t to string
+  snprintf(content_length, sizeof(content_length), "%zu", response->file_size);
 
-/*
-HttpResponse *handle_get(HttpRequest *request, void *context) {
-  // not yet
-  return NULL;
-}
+  char* date = http_date_now();
+  char *last_modified = http_date_now();
 
-HttpResponse *handle_post(HttpRequest *request, void *context) {
-  // not yet
-  return NULL;
+  set_header(response, "Server", "http-server");
+  set_header(response, "Date", date);
+  set_header(response, "Connection", "close"); 
+  set_header(response, "Content-Type", content_type);
+  set_header(response, "Content-Length", content_length);
+  set_header(response, "Last-Modified", last_modified);
+
+  free(date);
+  free(last_modified);
+
+  return response;
 }
-*/
 
 // serialise response to string.
 // include_body: whether to include the body in the response.

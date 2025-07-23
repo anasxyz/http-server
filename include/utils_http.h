@@ -52,7 +52,7 @@ char* http_last_modified(const char *path);
 void trim_crlf(char *line);
 HttpRequest* parse_request(const char *raw_request);
 HttpResponse* parse_response(const char *raw_response);
-void set_header(HttpResponse *response, const char *key, const char *value);
+void set_header(HttpResponse *response, char *key, char *value);
 void free_response(HttpResponse *response);
 void free_request(HttpRequest *request);
 
@@ -61,7 +61,6 @@ typedef HttpResponse *(*RequestHandler)(HttpRequest *);
 typedef struct {
   const char *method;
   RequestHandler handler;
-  void *context;  // for passing route info or other data
 } MethodHandler;
 
 #endif /* utils_http_h */
