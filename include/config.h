@@ -1,33 +1,52 @@
-#ifndef config_h
-#define config_h
+// include/config.h (UPDATED)
+#ifndef CONFIG_H
+#define CONFIG_H
 
-#include <stddef.h>
+#include <stddef.h> // For size_t
 
+// Forward declarations if needed for other files
+typedef struct Alias Alias;
+typedef struct Proxy Proxy;
+
+// Define the Config struct to hold all configuration parameters
 typedef struct {
-  char* from; // request prefix like "/images/"
-  char* to; // file path like "/var/www/stuff/images/"
-} Alias;
+    int port;
+    char *root;
+    char **index_files;
+    size_t index_files_count;
+    char **try_files;
+    size_t try_files_count;
+    Alias *aliases;
+    size_t aliases_count;
+    Proxy *proxies;
+    size_t proxies_count;
+} Config;
 
-typedef struct {
-  char *from;  // request prefix like "/api/"
-  char *to;    // backend base URL like "http://localhost:5000/"
-} Proxy;
+// Alias and Proxy structs (if not already in separate headers)
+struct Alias {
+  char *from;
+  char *to;
+};
 
-extern int PORT;
-extern char* ROOT;
-extern char **INDEX_FILES;
-extern size_t INDEX_FILES_COUNT;
+struct Proxy {
+  char *from;
+  char *to;
+  // Potentially add target_host and target_port here from parsing "to" field
+};
 
-extern char **TRY_FILES;
-extern size_t TRY_FILES_COUNT;
 
-extern Alias *ALIASES;
-extern size_t ALIASES_COUNT;
+// Function to load config into a provided Config struct
+// Returns 1 on success, 0 on failure
+int load_config_into_struct(const char *path, Config *cfg);
 
-extern Proxy *PROXIES;
-extern size_t PROXIES_COUNT;
+// Function to free memory associated with a Config struct
+void free_config_struct(Config *cfg);
 
-void load_config(const char *path);
-void free_config();
+// Functions to get/set the globally active configuration
+Config *get_current_config();
+void set_current_config(Config *new_config);
 
-#endif /* config_h */
+// Function to free the currently active global config
+void free_global_config();
+
+#endif // CONFIG_H

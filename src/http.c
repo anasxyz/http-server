@@ -13,7 +13,7 @@
 #include <sys/sendfile.h>
 #include <time.h>
 
-#include "../include/config.h"
+#include "../include/config.h" // Now includes the Config struct and accessors
 #include "../include/http.h"
 #include "../include/proxy.h"
 #include "../include/utils_http.h"
@@ -45,8 +45,16 @@ HttpResponse *create_response(int status_code, char *path) {
     response->headers = NULL;
     response->header_count = 0;
 
-
     char* content_type = NULL;
+
+    // Get the current active configuration
+    // This is crucial: all config-dependent logic now uses `current_cfg`
+    Config *current_cfg = get_current_config();
+    if (!current_cfg) {
+        fprintf(stderr, "Error: No active configuration found when creating response!\n");
+        free_response(response); // Free partially allocated response
+        return NULL; // Critical error
+    }
 
     // set status line
     response->status_line.http_version = strdup("HTTP/1.1");
@@ -65,8 +73,8 @@ HttpResponse *create_response(int status_code, char *path) {
     // if error
     if (status_code >= 400) { // for errors, path might be NULL or irrelevant
         char error_file_path[512];
-        // ROOT from config
-        snprintf(error_file_path, sizeof(error_file_path), "%s/%d.html", ROOT, status_code);
+        // Use current_cfg->root here
+        snprintf(error_file_path, sizeof(error_file_path), "%s/%d.html", current_cfg->root, status_code);
 
         response->file_fd = open(error_file_path, O_RDONLY | O_NONBLOCK); // open non blocking
         if (response->file_fd == -1) {
@@ -75,9 +83,8 @@ HttpResponse *create_response(int status_code, char *path) {
             // but for now i'll just make sure content_type and size are handled
             set_header(response, "Content-Type", "text/plain");
             set_header(response, "Content-Length", "0"); // no body
-            close(response->file_fd); // close invalid fd
-            response->file_fd = -1; // mark as invalid
-            return response;
+            // Ensure file_fd is -1 if open failed, it should be already set
+            return response; // Return response with no body
         }
 
         struct stat st;
@@ -100,7 +107,7 @@ HttpResponse *create_response(int status_code, char *path) {
         response->file_fd = open(path, O_RDONLY | O_NONBLOCK); // open non blocking
         if (response->file_fd == -1) {
             perror("Error opening requested file");
-            // could be a 404 if logic failed to catch it or a 403 for pwermissions 
+            // could be a 404 if logic failed to catch it or a 403 for pwermissions
             free_response(response);
             return create_response(404, NULL); // Or 403 depending on errno
         }
@@ -161,15 +168,21 @@ char *serialise_response(HttpResponse *response) {
     return buffer;
 }
 
+// Method handler for GET requests. Uses current config for path resolution.
 HttpResponse *handle_get(HttpRequest *request) {
     char *path = NULL;
     char *resolved_path = NULL;
     HttpResponse *response = NULL;
 
     // --- check for alias matches ---
+    // check_for_alias_match now internally uses get_current_config()
     path = check_for_alias_match(request->request_line.path);
+    if (!path) { // check_for_alias_match can return NULL on malloc fail
+        return create_response(500, NULL);
+    }
 
-    // --- try files from config if no aliases matched ---
+    // --- try files from config ---
+    // try_paths now internally uses get_current_config()
     resolved_path = try_paths(path);
 
     if (!resolved_path) {
@@ -180,6 +193,9 @@ HttpResponse *handle_get(HttpRequest *request) {
 
     // if path exists
     response = create_response(200, resolved_path);
+    if (!response) { // If create_response failed for 200 OK (e.g., file open error)
+        response = create_response(500, NULL); // Fallback to Internal Server Error
+    }
 
 end:
     if (path) free(path);
@@ -193,7 +209,15 @@ end:
 void handle_request(ClientState *client_state) {
     HttpRequest *request = NULL;
     HttpResponse *response = NULL;
-    ProxyResult *proxy_result = NULL;
+    ProxyResult *proxy_result = NULL; 
+
+    // Get the current active configuration
+    Config *current_cfg = get_current_config();
+    if (!current_cfg) {
+        fprintf(stderr, "Error: No active configuration found for request handling!\n");
+        response = create_response(500, NULL); // Internal Server Error
+        goto prepare_response_headers;
+    }
 
     // parse the request from the accumulated read_buffer
     request = parse_request(client_state->read_buffer);
@@ -205,6 +229,7 @@ void handle_request(ClientState *client_state) {
     }
 
     // --- proxy handling ---
+    // find_proxy_for_path now internally uses current_cfg->proxies
     Proxy *proxy = find_proxy_for_path(request->request_line.path);
     if (proxy) {
         // i want to note here that proxy_request would also need to be non blocking or spawn a separate

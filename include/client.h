@@ -43,7 +43,7 @@ typedef struct {
     STATE_CLOSING
   } state;
 
-  ProxyResult *proxy_result; // To temporarily hold headers/body for sending to client
+  ProxyResult *proxy_result; // to temporarily hold headers/body for sending to client
 } ClientState;
 
 #endif /* client_h */
