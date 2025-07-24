@@ -8,6 +8,7 @@
 ## Features
 
 - [ ] Full implementation of the HTTP protocol.
+- [ ] Event-driven architecture with non-blocking I/O.
 - [x] Static file serving with full MIME type support and directory indexing.
 - [x] Basic routing engine supporting URL rewriting and redirection, custom error pages, fallback files, and aliasing.
 - [x] Basic reverse proxying to upstream backend servers.  
