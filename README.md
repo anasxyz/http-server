@@ -12,13 +12,14 @@
 - ✅ Full Static file serving with full MIME type support and directory indexing.
 - ✅ Basic routing engine supporting URL rewriting and redirection, fallback files, and aliasing.
 - ✅ Basic partial non blocking I/O reverse proxying to upstream backend servers.  
-- ✅ Easy to use configuration system with flexible syntax supporting environment variables and dynamic reloads without downtime.
+- ✅ Easy to use configuration system with flexible syntax.
+- ✅ Basic Logging and monitoring with customisable access and error logs.
+- ❌ Configuration support for environment variables and dynamic reloads without downtime.
 - ❌ Security features including access control, hidden file protection, IP address filtering, and support for HTTPS/TLS encryption.
 - ❌ HTTP/1.1 and HTTP/2 support with keep-alive connection management, pipelining, and request multiplexing.
 - ❌ Support for virtual hosts (multiple domains on one server).
 - ❌ Support for HTTP caching headers, ETags, and conditional GET requests. 
 - ❌ Compression support with gzip and brotli to optimise bandwidth usage.
-- ❌ Basic Logging and monitoring with customisable access and error logs.
 - ❌ Modular and extensible architecture with support for custom plugins and extensions.
 - ❌ Configurable rate limiting and connection throttling to protect against DDoS attacks.
 - ❌ Support for WebSocket proxying and HTTP/2 server push. 
