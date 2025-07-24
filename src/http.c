@@ -12,8 +12,9 @@
 #include <sys/stat.h>
 #include <sys/sendfile.h>
 #include <time.h>
+#include <errno.h> // needed for strerror(errno)
 
-#include "../include/config.h" // Now includes the Config struct and accessors
+#include "../include/config.h" // now includes the config struct and accessors, and logging functions
 #include "../include/http.h"
 #include "../include/proxy.h"
 #include "../include/utils_http.h"
@@ -34,8 +35,11 @@ MethodHandler handlers[] = {
 
 HttpResponse *create_response(int status_code, char *path) {
     HttpResponse *response = malloc(sizeof(HttpResponse));
-    if (!response)
+    if (!response) {
+        // log: malloc failure
+        log_error("malloc for httpresponse failed");
         return NULL;
+    }
 
     // init response fields
     response->file_fd = -1; // -1 just because no file is open by default
@@ -51,6 +55,8 @@ HttpResponse *create_response(int status_code, char *path) {
     // This is crucial: all config-dependent logic now uses `current_cfg`
     Config *current_cfg = get_current_config();
     if (!current_cfg) {
+        // log: critical config error
+        log_error("no active configuration found when creating response!");
         fprintf(stderr, "Error: No active configuration found when creating response!\n");
         free_response(response); // Free partially allocated response
         return NULL; // Critical error
@@ -64,6 +70,12 @@ HttpResponse *create_response(int status_code, char *path) {
 
     size_t header_count = sizeof(headers) / sizeof(Header);
     response->headers = malloc(sizeof(Header) * header_count);
+    if (!response->headers) {
+        // log: malloc failure
+        log_error("malloc for response headers failed in create_response");
+        free_response(response);
+        return NULL;
+    }
     response->header_count = header_count;
     for (size_t i = 0; i < header_count; i++) {
         response->headers[i].key = strdup(headers[i].key);
@@ -78,6 +90,8 @@ HttpResponse *create_response(int status_code, char *path) {
 
         response->file_fd = open(error_file_path, O_RDONLY | O_NONBLOCK); // open non blocking
         if (response->file_fd == -1) {
+            // log: error opening error file
+            log_error("error opening error file %s for status %d: %s", error_file_path, status_code, strerror(errno));
             perror("Error opening error file");
             // here i should probably fallback to generic error message or close connection
             // but for now i'll just make sure content_type and size are handled
@@ -89,6 +103,8 @@ HttpResponse *create_response(int status_code, char *path) {
 
         struct stat st;
         if (fstat(response->file_fd, &st) == -1) {
+            // log: fstat error
+            log_error("fstat error file %s failed: %s", error_file_path, strerror(errno));
             perror("fstat error file");
             close(response->file_fd);
             response->file_fd = -1;
@@ -100,12 +116,16 @@ HttpResponse *create_response(int status_code, char *path) {
     } else {
         // for successful responses the path should always be provided
         if (!path) { // should not happen for 2xx responses normally
+            // log: null path for 2xx response
+            log_error("path is null for successful (2xx) response creation. this should not happen.");
             free_response(response);
             return create_response(500, NULL); // internal Server Error
         }
         // open file
         response->file_fd = open(path, O_RDONLY | O_NONBLOCK); // open non blocking
         if (response->file_fd == -1) {
+            // log: error opening requested file
+            log_error("error opening requested file %s: %s", path, strerror(errno));
             perror("Error opening requested file");
             // could be a 404 if logic failed to catch it or a 403 for pwermissions
             free_response(response);
@@ -115,6 +135,8 @@ HttpResponse *create_response(int status_code, char *path) {
         // get file size
         struct stat st;
         if (fstat(response->file_fd, &st) == -1) {
+            // log: fstat error
+            log_error("fstat requested file %s failed: %s", path, strerror(errno));
             perror("fstat requested file");
             close(response->file_fd);
             response->file_fd = -1;
@@ -130,17 +152,23 @@ HttpResponse *create_response(int status_code, char *path) {
     snprintf(content_length_str, sizeof(content_length_str), "%zu", response->file_size);
 
     char* date = http_date_now();
-    char *last_modified = http_date_now(); // change this later to the actual file's last modified time
+    // this line needs to be fixed to get actual file last modified. using http_date_now() for simplicity.
+    char *last_modified_str = (path && response->file_fd != -1) ? http_last_modified(path) : strdup("");
+
 
     set_header(response, "Server", "http-server");
     set_header(response, "Date", date);
     set_header(response, "Connection", "close"); // start with close persistent can be added later
-    set_header(response, "Content-Type", content_type);
+    set_header(response, "Content-Type", content_type ? content_type : "application/octet-stream"); // default if mime type is null
     set_header(response, "Content-Length", content_length_str);
-    set_header(response, "Last-Modified", last_modified);
+    if (last_modified_str) {
+        set_header(response, "Last-Modified", last_modified_str);
+    } else {
+        set_header(response, "Last-Modified", ""); // ensure it's not null
+    }
 
     free(date);
-    free(last_modified);
+    if (last_modified_str) free(last_modified_str); // free if strdup was used
 
     return response;
 }
@@ -152,19 +180,42 @@ char *serialise_response(HttpResponse *response) {
     // here i just estimate the size so just max headers + status line + CRLF
     int size = 1024 + (response->header_count * 128);
     char *buffer = malloc(size);
-    if (!buffer)
+    if (!buffer) {
+        // log: malloc failure
+        log_error("malloc for serialise_response buffer failed");
         return NULL;
+    }
+    buffer[0] = '\0'; // ensure null-termination for snprintf
 
     int offset = snprintf(
         buffer, size, "%s %d %s\r\n", response->status_line.http_version,
         response->status_line.status_code, response->status_line.status_reason);
 
-    for (size_t i = 0; i < response->header_count; i++) {
-        offset += snprintf(buffer + offset, size - offset, "%s: %s\r\n",
-                           response->headers[i].key, response->headers[i].value);
+    if (offset < 0 || offset >= size) { // check for snprintf error or truncation
+        log_error("snprintf error or truncation for status line in serialise_response");
+        free(buffer);
+        return NULL;
     }
 
-    offset += snprintf(buffer + offset, size - offset, "\r\n");
+    for (size_t i = 0; i < response->header_count; i++) {
+        int written = snprintf(buffer + offset, size - offset, "%s: %s\r\n",
+                               response->headers[i].key, response->headers[i].value);
+        if (written < 0 || written >= size - offset) { // check for snprintf error or truncation
+            log_error("snprintf error or truncation for header %s in serialise_response", response->headers[i].key);
+            free(buffer);
+            return NULL;
+        }
+        offset += written;
+    }
+
+    int written = snprintf(buffer + offset, size - offset, "\r\n");
+    if (written < 0 || written >= size - offset) { // check for snprintf error or truncation
+        log_error("snprintf error or truncation for final crlf in serialise_response");
+        free(buffer);
+        return NULL;
+    }
+    offset += written;
+
     return buffer;
 }
 
@@ -178,6 +229,8 @@ HttpResponse *handle_get(HttpRequest *request) {
     // check_for_alias_match now internally uses get_current_config()
     path = check_for_alias_match(request->request_line.path);
     if (!path) { // check_for_alias_match can return NULL on malloc fail
+        // log: alias match failure
+        log_error("check_for_alias_match failed (likely malloc issue) for path: %s", request->request_line.path);
         return create_response(500, NULL);
     }
 
@@ -187,6 +240,8 @@ HttpResponse *handle_get(HttpRequest *request) {
 
     if (!resolved_path) {
         // path doesn't exist - page not found
+        // log: file not found
+        log_access("file not found for path: %s", path);
         response = create_response(404, NULL);
         goto end; // goto for cleanup before returning
     }
@@ -194,6 +249,8 @@ HttpResponse *handle_get(HttpRequest *request) {
     // if path exists
     response = create_response(200, resolved_path);
     if (!response) { // If create_response failed for 200 OK (e.g., file open error)
+        // log: create_response failed for 200 OK
+        log_error("create_response failed for 200 OK with path: %s", resolved_path);
         response = create_response(500, NULL); // Fallback to Internal Server Error
     }
 
@@ -209,11 +266,24 @@ end:
 void handle_request(ClientState *client_state) {
     HttpRequest *request = NULL;
     HttpResponse *response = NULL;
-    ProxyResult *proxy_result = NULL; 
+    ProxyResult *proxy_result = NULL;
+    char *client_ip_str = NULL; // to get client ip for logging
+
+    // get client ip for logging
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    if (getpeername(client_state->fd, (struct sockaddr *)&client_addr, &addr_len) == 0) {
+        client_ip_str = inet_ntoa(client_addr.sin_addr);
+    } else {
+        log_error("getpeername failed for client fd %d: %s", client_state->fd, strerror(errno));
+        client_ip_str = "unknown";
+    }
 
     // Get the current active configuration
     Config *current_cfg = get_current_config();
     if (!current_cfg) {
+        // log: critical config error
+        log_error("no active configuration found for request handling for client %s!", client_ip_str);
         fprintf(stderr, "Error: No active configuration found for request handling!\n");
         response = create_response(500, NULL); // Internal Server Error
         goto prepare_response_headers;
@@ -224,6 +294,8 @@ void handle_request(ClientState *client_state) {
     client_state->request = request; // store for later freeing
 
     if (!request) {
+        // log: bad request
+        log_error("failed to parse request from client %s. raw buffer: \"%s\"", client_ip_str, client_state->read_buffer);
         response = create_response(400, NULL); // bad request
         goto prepare_response_headers;
     }
@@ -239,6 +311,8 @@ void handle_request(ClientState *client_state) {
         // socket with epoll too and handle its events.
         proxy_result = proxy_request(proxy, client_state->read_buffer); // reuse raw request buffer
         if (!proxy_result) {
+            // log: proxy request failed
+            log_error("proxy request to %s failed for client %s (path: %s): %s", proxy->to, client_ip_str, request->request_line.path, strerror(errno));
             response = create_response(502, NULL); // bad gateway
             goto prepare_response_headers;
         }
@@ -275,6 +349,9 @@ void handle_request(ClientState *client_state) {
                 // !! would like to note that this this is a major simplification !!
                 // for a true non blocking proxy i'd have to read from the proxy socket and write to the client socket
                 // wgilst managing both FDs with epoll
+            } else {
+                // log: malloc failure for dummy proxy response
+                log_error("malloc for dummy httpresponse (proxy case) failed for client %s", client_ip_str);
             }
         }
         client_state->response = response; // store for freeing
@@ -284,6 +361,20 @@ void handle_request(ClientState *client_state) {
         free(proxy_result);
 
         client_state->state = STATE_SENDING_HEADERS; // ready to send proxy headers
+        // log: access log for proxied request
+        if (request) { // check request for logging purposes
+            int proxied_status_code = (response && response->status_line.status_code != 0) ? response->status_line.status_code : 200; // try to get actual status or default
+            size_t proxied_body_len = (response && response->file_size != 0) ? response->file_size : 0; // try to get actual size or default
+            log_access("%s \"%s %s %s\" %d %zu",
+                       client_ip_str,
+                       request->request_line.method,
+                       request->request_line.path,
+                       request->request_line.version,
+                       proxied_status_code,
+                       proxied_body_len);
+        } else {
+            log_access("%s \"proxied request parse failed\" 500 -", client_ip_str);
+        }
         return; // done processing for this event
     }
 
@@ -313,12 +404,38 @@ prepare_response_headers:
             client_state->file_send_offset = 0; // reset file offset
         } else {
             // failed to serialise response so close connection
+            // log: failed to serialize response
+            log_error("failed to serialize response for fd %d (client %s)", client_state->fd, client_ip_str);
             fprintf(stderr, "Failed to serialize response for fd %d\n", client_state->fd);
             client_state->state = STATE_CLOSING; // signal main to close
         }
     } else {
         // no resposne generated
+        // log: no response generated
+        log_error("no response generated for fd %d (client %s)", client_state->fd, client_ip_str);
         fprintf(stderr, "No response generated for fd %d\n", client_state->fd);
         client_state->state = STATE_CLOSING; // signal main to close
+    }
+
+    // log: final access log for non-proxied requests
+    if (request && response) {
+        log_access("%s \"%s %s %s\" %d %zu",
+                   client_ip_str,
+                   request->request_line.method,
+                   request->request_line.path,
+                   request->request_line.version,
+                   response->status_line.status_code,
+                   response->file_size);
+    } else if (request) {
+        // a request was parsed, but response generation failed (e.g., malloc in create_response)
+        log_access("%s \"%s %s %s\" %d -", // "-" for unknown body size
+                   client_ip_str,
+                   request->request_line.method,
+                   request->request_line.path,
+                   request->request_line.version,
+                   500); // assume 500 internal server error
+    } else {
+        // request wasn't even parsed (e.g., 400 bad request)
+        log_access("%s \"-\" %d -", client_ip_str, 400); // "-" for unknown request line and body size
     }
 }

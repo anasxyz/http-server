@@ -48,6 +48,10 @@ Example `server.conf`:
 port 8080
 root /var/www/
 
+# Logging
+access_log /var/log/http-server/access.log
+error_log /var/log/http-server/error.log
+
 # Static file handling
 index /index.html /index.htm
 try_files $uri $uri/ /404.html
@@ -65,6 +69,10 @@ proxy /other/ http://example.com/
 -   `port`: The TCP port on which the server listens for incoming HTTP connections.
 
 -   `root`: The root directory where your static files are served from. If not specified in the configuration file, the default root directory will be set to `/var/www/`
+
+- `access_log`: The path to the access log file.
+
+- `error_log`: The path to the error log file.
 
 - `index`: List of index files to serve when a directory is requested (e.g. `/index.html`, `/index.htm`).
 
