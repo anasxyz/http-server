@@ -35,7 +35,6 @@ void make_socket_non_blocking(int sockfd) {
     }
 }
 
-// Function to free client state
 void free_client_state(ClientState *client_state) {
     if (client_state) {
         if (client_state->request) {
