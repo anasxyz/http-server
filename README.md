@@ -29,7 +29,7 @@
 - ❌ Support for WebSocket proxying and HTTP/2 server push.
 
 ## What I Learned
-- HTTP Protocol: COmprehensive understanding of the HTTP protocol and how it works.
+- HTTP Protocol: Comprehensive understanding of the HTTP protocol and how it works.
 - File Descriptors: Everything like files, sockets, pipes is an FD. Learned to create, manage, and reuse them safely.
 - Sockets & TCP: Learned alot about `socket()` → `bind()` → `listen()` → `accept()` lifecycle. Understood TCP handshakes, backlog, graceful shutdown.
 - Syscalls: Used `read()`, `write()`, `sendfile()`, `stat()`, `open()`, `close()` directly. Learned to handle `EAGAIN`, `EINTR`, etc.
