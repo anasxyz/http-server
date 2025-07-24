@@ -51,7 +51,7 @@ $ make
 ## Usage
 
 ```bash
-./server
+$ ./server
 ```
 
 ## Configuration
