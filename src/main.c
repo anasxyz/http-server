@@ -9,7 +9,6 @@
 
 #include "../include/config.h"
 
-#include "../include/client.h"
 #include "../include/server.h"
 #include "../include/http.h"
 
