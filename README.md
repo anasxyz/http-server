@@ -31,7 +31,7 @@
 ## What I Learned
 - File Descriptors: Everything like files, sockets, pipes is an FD. Learned to create, manage, and reuse them safely.
 - Sockets & TCP: Learned alot about `socket()` → `bind()` → `listen()` → `accept()` lifecycle. Understood TCP handshakes, backlog, graceful shutdown.
-- Syscalls: Used `read()`, `write()`, `sendfile()`, `stat()`, `open()`, `close()` directly. Learned to handle EAGAIN, EINTR, etc.
+- Syscalls: Used `read()`, `write()`, `sendfile()`, `stat()`, `open()`, `close()` directly. Learned to handle `EAGAIN`, `EINTR`, etc.
 - Non-blocking I/O: Used `fcntl()` to make sockets non-blocking. Managed readiness and retry logic.
 - Event polling through `epoll`: Implemented efficient event-driven I/O with `epoll_create1()`, `epoll_ctl()`, `epoll_wait()`. Learned edge-triggered vs level-triggered behavior.
 - Threading: Used `pthread_create()` + `pthread_detach()` for concurrency in the initial connection per thread model. Managed memory and lifetime in multithreaded code.
