@@ -1,4 +1,5 @@
 
+
 # http-server
 
 **A lightweight HTTP web server written from scratch in C**
@@ -6,15 +7,18 @@
 > ⚠️ This is an educational project.
 
 ## Features
-
-- ✅ Partial implementation of the HTTP protocol.
+- ✅ Proud to mention that it's completely memory safe with no memory leaks.
+- ✅ Partial implementation of the HTTP protocol with request parsing and response generation.
 - ✅ Partial Event-driven architecture with non-blocking I/O.
-- ✅ Full Static file serving with full MIME type support and directory indexing.
+- ✅ Fast and efficient static file serving with full MIME type support and directory indexing.
 - ✅ Basic routing engine supporting URL rewriting and redirection, fallback files, and aliasing.
 - ✅ Basic partial non blocking I/O reverse proxying to upstream backend servers.  
-- ✅ Easy to use configuration system with flexible syntax.
+- ✅ Easy to use compact configuration system with flexible syntax.
 - ✅ Basic Logging and monitoring with customisable access and error logs.
-- ❌ Configuration support for environment variables and dynamic reloads without downtime.
+
+---
+
+- ❌ Advanced configuration support for environment variables and dynamic reloads without downtime.
 - ❌ Security features including access control, hidden file protection, IP address filtering, and support for HTTPS/TLS encryption.
 - ❌ HTTP/1.1 and HTTP/2 support with keep-alive connection management, pipelining, and request multiplexing.
 - ❌ Support for virtual hosts (multiple domains on one server).
@@ -22,7 +26,7 @@
 - ❌ Compression support with gzip and brotli to optimise bandwidth usage.
 - ❌ Modular and extensible architecture with support for custom plugins and extensions.
 - ❌ Configurable rate limiting and connection throttling to protect against DDoS attacks.
-- ❌ Support for WebSocket proxying and HTTP/2 server push. 
+- ❌ Support for WebSocket proxying and HTTP/2 server push.
 
 ## Installation / Build Instructions
 
