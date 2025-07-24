@@ -159,7 +159,7 @@ void handle_request(int socket, char *request_buffer) {
   if (proxy) {
     proxy_result = proxy_request(proxy, request_buffer);
     if (!proxy_result) {
-      response = create_response(503, NULL); // bad gateway
+      response = create_response(502, NULL); // bad gateway
       goto send;
     }
     goto proxy_send;
