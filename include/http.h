@@ -6,9 +6,11 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-HttpResponse *create_response(int status_code);
-void handle_request(int socket, char *request);
-HttpResponse *handle_get(HttpRequest *request, void *context);
-HttpResponse *handle_post(HttpRequest *request, void *context);
+#include "client.h"
+
+HttpResponse *create_response(int status_code, char *path);
+HttpResponse *handle_get(HttpRequest *request);
+HttpResponse *handle_post(HttpRequest *request);
+void handle_request(ClientState *client_state);
 
 #endif /* http_h */

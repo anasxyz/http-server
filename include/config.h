@@ -1,33 +1,49 @@
 #ifndef config_h
 #define config_h
 
-#include <stddef.h>
+#include <stddef.h> 
+
+typedef struct Alias Alias;
+typedef struct Proxy Proxy;
 
 typedef struct {
-  char* from; // request prefix like "/images/"
-  char* to; // file path like "/var/www/stuff/images/"
-} Alias;
+    char *access_log_path; // path to the access log file
+    char *error_log_path;  // path to the error log file
+    int access_log_fd;     // file descriptor for access log
+    int error_log_fd;      // file descriptor for error log
+} Logger;
 
+// define the Config struct to hold all configuration parameters
 typedef struct {
-  char *from;  // request prefix like "/api/"
-  char *to;    // backend base URL like "http://localhost:5000/"
-} Proxy;
+    int port;
+    char *root;
+    char **index_files;
+    size_t index_files_count;
+    char **try_files;
+    size_t try_files_count;
+    Alias *aliases;
+    size_t aliases_count;
+    Proxy *proxies;
+    size_t proxies_count;
+    Logger logger; // embed the logger struct directly
+} Config;
 
-extern int PORT;
-extern char* ROOT;
-extern char **INDEX_FILES;
-extern size_t INDEX_FILES_COUNT;
+struct Alias {
+  char *from;
+  char *to;
+};
 
-extern char **TRY_FILES;
-extern size_t TRY_FILES_COUNT;
+struct Proxy {
+  char *from;
+  char *to;
+};
 
-extern Alias *ALIASES;
-extern size_t ALIASES_COUNT;
+int load_config_into_struct(const char *path, Config *cfg);
+void free_config_struct(Config *cfg);
+Config *get_current_config();
+void set_current_config(Config *new_config);
+void free_global_config();
+void log_access(const char *format, ...);
+void log_error(const char *format, ...);
 
-extern Proxy *PROXIES;
-extern size_t PROXIES_COUNT;
-
-void load_config(const char *path);
-void free_config();
-
-#endif /* config_h */
+#endif // config_h

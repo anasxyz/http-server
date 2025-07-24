@@ -7,20 +7,22 @@
 
 ## Features
 
-- [ ] Full implementation of the HTTP protocol.
-- [x] Static file serving with full MIME type support and directory indexing.
-- [x] Basic routing engine supporting URL rewriting and redirection, custom error pages, fallback files, and aliasing.
-- [x] Basic reverse proxying to upstream backend servers.  
-- [ ] Security features including access control, hidden file protection, IP address filtering, and support for HTTPS/TLS encryption.
-- [ ] HTTP/1.1 and HTTP/2 support with keep-alive connection management, pipelining, and request multiplexing.
-- [ ] Support for virtual hosts (multiple domains on one server).
-- [ ] Support for HTTP caching headers, ETags, and conditional GET requests. 
-- [ ] Compression support with gzip and brotli to optimise bandwidth usage.
-- [ ] Basic Logging and monitoring with customisable access and error logs.
-- [ ] Modular and extensible architecture with support for custom plugins and extensions.
-- [ ] Configurable rate limiting and connection throttling to protect against DDoS attacks.
-- [ ] Easy to use configuration system with flexible syntax supporting environment variables and dynamic reloads without downtime.
-- [ ] Support for WebSocket proxying and HTTP/2 server push. 
+- ✅ Partial implementation of the HTTP protocol.
+- ✅ Partial Event-driven architecture with non-blocking I/O.
+- ✅ Full Static file serving with full MIME type support and directory indexing.
+- ✅ Basic routing engine supporting URL rewriting and redirection, fallback files, and aliasing.
+- ✅ Basic partial non blocking I/O reverse proxying to upstream backend servers.  
+- ✅ Easy to use configuration system with flexible syntax.
+- ✅ Basic Logging and monitoring with customisable access and error logs.
+- ❌ Configuration support for environment variables and dynamic reloads without downtime.
+- ❌ Security features including access control, hidden file protection, IP address filtering, and support for HTTPS/TLS encryption.
+- ❌ HTTP/1.1 and HTTP/2 support with keep-alive connection management, pipelining, and request multiplexing.
+- ❌ Support for virtual hosts (multiple domains on one server).
+- ❌ Support for HTTP caching headers, ETags, and conditional GET requests. 
+- ❌ Compression support with gzip and brotli to optimise bandwidth usage.
+- ❌ Modular and extensible architecture with support for custom plugins and extensions.
+- ❌ Configurable rate limiting and connection throttling to protect against DDoS attacks.
+- ❌ Support for WebSocket proxying and HTTP/2 server push. 
 
 ## Installation / Build Instructions
 
@@ -47,6 +49,10 @@ Example `server.conf`:
 port 8080
 root /var/www/
 
+# Logging
+access_log /var/log/http-server/access.log
+error_log /var/log/http-server/error.log
+
 # Static file handling
 index /index.html /index.htm
 try_files $uri $uri/ /404.html
@@ -59,11 +65,15 @@ alias /docs/ /var/www/manuals/
 proxy /api/ http://localhost:5050/
 proxy /external/ http://localhost:5050/page/hello
 proxy /other/ http://example.com/
-
 ```
+
 -   `port`: The TCP port on which the server listens for incoming HTTP connections.
 
 -   `root`: The root directory where your static files are served from. If not specified in the configuration file, the default root directory will be set to `/var/www/`
+
+- `access_log`: The path to the access log file.
+
+- `error_log`: The path to the error log file.
 
 - `index`: List of index files to serve when a directory is requested (e.g. `/index.html`, `/index.htm`).
 

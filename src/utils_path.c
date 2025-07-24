@@ -9,7 +9,7 @@
 
 #include "../include/utils_path.h"
 
-char *get_mime_type(const char *path) {
+char *get_mime_type(char *path) {
   const char *extension = strrchr(path, '.');
   if (extension == NULL) {
     return "application/octet-stream";
