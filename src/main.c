@@ -19,35 +19,12 @@
 #define MAX_EVENTS 1000
 #define MAX_BUFFER_SIZE 8192
 
-// Global flag to indicate a config reload is requested
+// global flag to indicate a config reload is requested
 volatile sig_atomic_t reload_config_flag = 0;
 
-// Existing ClientState definition (assuming it's in http.h or a shared header)
-// typedef struct {
-//     int fd;
-//     char read_buffer[MAX_BUFFER_SIZE];
-//     size_t read_buffer_len;
-//     HttpRequest *request;
-//     HttpResponse *response;
-//     char *response_headers_buffer;
-//     size_t response_headers_len;
-//     size_t response_headers_sent;
-//     off_t file_send_offset;
-//     enum {
-//         STATE_READING_REQUEST,
-//         STATE_PROCESSING_REQUEST,
-//         STATE_SENDING_HEADERS,
-//         STATE_SENDING_BODY,
-//         STATE_CLOSING
-//     } state;
-// } ClientState;
-
-
-void handle_sigint(int signum) { // Add signum parameter for proper signal handler signature
+void handle_sigint(int signum) { // add signum parameter for proper signal handler signature
     printf("\nCaught SIGINT (%d), cleaning up...\n", signum);
-    // In a real scenario, you'd signal a graceful shutdown to the event loop
-    // For now, exit is fine for SIGINT
-    free_global_config(); // Use new function
+    free_global_config(); 
     exit(0);
 }
 
@@ -75,7 +52,6 @@ void free_client_state(ClientState *client_state) {
         }
         if (client_state->response) {
             free_response(client_state->response);
-            // After response is freed, close the file_fd if it was open
             if (client_state->response->file_fd != -1) {
                 close(client_state->response->file_fd);
             }
@@ -86,7 +62,6 @@ void free_client_state(ClientState *client_state) {
         free(client_state);
     }
 }
-
 
 void launch(struct Server *server) {
     printf("======== SERVER STARTED ========\n");
@@ -112,42 +87,33 @@ void launch(struct Server *server) {
     struct epoll_event events[MAX_EVENTS];
 
     while (1) {
-        // Check for config reload request before epoll_wait
+        // check for config reload request before epoll_wait
         if (reload_config_flag) {
             printf("Reloading configuration...\n");
-            // Attempt to load new config
+            // attempt to load new config
             Config *new_config = malloc(sizeof(Config));
             if (!new_config) {
                 perror("malloc new_config for reload");
-                // Log error, continue with old config
+                // log error and continue with old config
             } else {
                 if (load_config_into_struct("server.conf", new_config)) {
-                    // Successfully loaded new config, now swap
-                    Config *old_config = get_current_config(); // Get pointer to active config
-                    set_current_config(new_config); // Set new config as active
-                    free_config_struct(old_config); // Free the old config's memory
+                    Config *old_config = get_current_config();
+                    set_current_config(new_config);
+                    free_config_struct(old_config); 
                     printf("Configuration reloaded successfully.\n");
-                    // Update server port if it changed (requires re-binding socket, more complex for this project)
-                    // For now, assume port doesn't change or require server restart
-                    // If port changes, you'd need to close the old listening socket, create a new one,
-                    // bind, listen, and add it to epoll. This is very complex for a graceful reload.
-                    // For this project, let's assume `PORT` is constant after server start.
-                    // If server.port needs to be updated: server->port = get_current_config()->port;
-                    // But this only updates the *value*, not the actual bound socket.
                 } else {
-                    // New config failed to load, log error and keep old config
                     fprintf(stderr, "Failed to load new configuration. Keeping old config.\n");
-                    free_config_struct(new_config); // Free the failed new config
+                    free_config_struct(new_config); 
                 }
             }
-            reload_config_flag = 0; // Reset the flag
+            reload_config_flag = 0; 
         }
 
 
         int n = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
         if (n == -1) {
-            if (errno == EINTR) { // Interrupted by signal (like SIGHUP)
-                continue; // Go back to top of loop to check reload_config_flag
+            if (errno == EINTR) { 
+                continue;
             }
             perror("epoll_wait");
             exit(EXIT_FAILURE);
@@ -181,7 +147,7 @@ void launch(struct Server *server) {
                         close(client_fd);
                         continue;
                     }
-                    memset(client_state, 0, sizeof(ClientState)); // Initialize all members to 0/NULL
+                    memset(client_state, 0, sizeof(ClientState)); // initialise all members to 0/NULL
                     client_state->fd = client_fd;
                     client_state->state = STATE_READING_REQUEST;
 
@@ -359,7 +325,6 @@ void launch(struct Server *server) {
 }
 
 int main() {
-    // Register signal handlers
     struct sigaction sa_int = {0};
     sa_int.sa_handler = handle_sigint;
     sigaction(SIGINT, &sa_int, NULL);
@@ -369,8 +334,8 @@ int main() {
     sigaction(SIGHUP, &sa_hup, NULL);
 
 
-    // Initial config load
-    // The load_config function will now populate a global Config struct
+    // initial config load
+    // the load_config function will now populate a global Config struct
     Config *initial_config = malloc(sizeof(Config));
     if (!initial_config) {
         perror("malloc initial_config");
@@ -381,20 +346,13 @@ int main() {
         free(initial_config);
         exit(EXIT_FAILURE);
     }
-    set_current_config(initial_config); // Set this as the active config
+    set_current_config(initial_config); // set this as the active config
 
-    // Get current port from the active configuration
-    // This assumes server_constructor will use the global PORT macro,
-    // which needs to be updated to use the dynamic config
-    // For now, if PORT is a global variable directly from config.c, it won't reflect dynamic changes here.
-    // It's better if server_constructor takes a Config* or at least the port from the config.
-    // As a temporary workaround, if PORT is still a global, you'd need to assume it's set by load_config_into_struct
-    // before server_constructor is called.
     struct Server server =
         server_constructor(AF_INET, SOCK_STREAM, 0, INADDR_ANY, get_current_config()->port, 10, launch);
 
     server.launch(&server);
 
-    free_global_config(); // Use new function for cleanup on exit
+    free_global_config(); 
     return 0;
 }

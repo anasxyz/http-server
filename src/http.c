@@ -12,9 +12,9 @@
 #include <sys/stat.h>
 #include <sys/sendfile.h>
 #include <time.h>
-#include <errno.h> // needed for strerror(errno)
+#include <errno.h>
 
-#include "../include/config.h" // now includes the config struct and accessors, and logging functions
+#include "../include/config.h"
 #include "../include/http.h"
 #include "../include/proxy.h"
 #include "../include/utils_http.h"
