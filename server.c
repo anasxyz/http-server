@@ -15,14 +15,15 @@
 // Define buffer sizes for client input/output
 #define MAX_BUFFER_SIZE 4096
 
-// --- NEW: Define states for our simple state machine ---
+// --- Define states for our simple state machine ---
 typedef enum {
     READING_REQUEST,
     WRITING_RESPONSE,
-    CLOSING_CONNECTION // State indicating we should close after current operation
+    // CLOSING_CONNECTION is handled implicitly by returning 1 from handler functions
+    // indicating the connection should be closed.
 } client_state_enum;
 
-// --- NEW: Structure to hold per-client state ---
+// --- Structure to hold per-client state ---
 typedef struct {
     int fd;                     // The client's file descriptor
     client_state_enum state;    // Current state of this client's interaction
@@ -121,7 +122,7 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
     struct sockaddr_in client_addr;
     socklen_t client_len;
     struct epoll_event event;
-    client_state_t *client_state; // --- NEW: Pointer to our client state struct
+    client_state_t *client_state; // Pointer to our client state struct
 
     // Loop to accept all pending connections.
     // In edge-triggered mode (EPOLLET), it's crucial to accept *all*
@@ -154,7 +155,7 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
             continue;         // Skip to the next potential connection
         }
 
-        // --- NEW: Allocate and initialize client state ---
+        // Allocate and initialize client state
         client_state = (client_state_t *)malloc(sizeof(client_state_t));
         if (client_state == NULL) {
             perror("malloc client_state failed");
@@ -172,7 +173,7 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
         // Add the new client socket to the epoll instance.
         // We want to be notified when this client socket has data to read (EPOLLIN).
         // We will add EPOLLOUT later when we have a response to send.
-        // --- MODIFIED: epoll_event.data.ptr now points to our client_state_t ---
+        // epoll_event.data.ptr now points to our client_state_t
         event.events = EPOLLIN | EPOLLET; // Watch for input, edge-triggered
         event.data.ptr = client_state;    // Associate the event with our client_state_t
         if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, conn_sock, &event) == -1) {
@@ -184,162 +185,187 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
     }
 }
 
+// --- NEW: Function to handle reading data from a client socket ---
+// Returns 1 if the connection should be closed, 0 otherwise.
+int handle_read_event(client_state_t *client_state, int epoll_fd) {
+    int current_fd = client_state->fd;
+    ssize_t bytes_transferred;
+
+    // Only read if we are in the READING_REQUEST state
+    if (client_state->state != READING_REQUEST) {
+        // This shouldn't happen if state machine is correct, but defensive check
+        printf("Client %d received EPOLLIN but not in READING_REQUEST state.\n", current_fd);
+        return 1; // Close connection as something unexpected happened
+    }
+
+    // In edge-triggered mode, it's crucial to read ALL available data
+    // until read() returns EAGAIN/EWOULDBLOCK or 0 (EOF).
+    while (1) {
+        // Read into the buffer, ensuring we don't overflow
+        bytes_transferred = read(current_fd,
+                                 client_state->in_buffer + client_state->in_buffer_len,
+                                 sizeof(client_state->in_buffer) - 1 - client_state->in_buffer_len);
+
+        if (bytes_transferred == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // No more data to read for now. Connection is still open.
+                break; // Exit read loop, wait for next event
+            } else {
+                perror("read client socket failed");
+                return 1; // Fatal read error, mark for closure
+            }
+        } else if (bytes_transferred == 0) {
+            // Client closed their side of the connection (End-of-File)
+            printf("Client socket %d closed connection during read.\n", current_fd);
+            return 1; // Mark for closure
+        } else {
+            // Successfully read some data
+            client_state->in_buffer_len += bytes_transferred;
+            client_state->in_buffer[client_state->in_buffer_len] = '\0'; // Null-terminate for printing
+
+            printf("Received %zd bytes from client %d. Total: %zu. Data: '%s'\n",
+                   bytes_transferred, current_fd, client_state->in_buffer_len, client_state->in_buffer);
+
+            // Simple HTTP request completion check
+            // For simplicity, we check for "\r\n\r\n" to signify end of headers.
+            // A real parser would be more robust.
+            if (strstr(client_state->in_buffer, "\r\n\r\n") != NULL) {
+                printf("Full HTTP request received from client %d. Preparing response.\n", current_fd);
+
+                // Prepare the HTTP response
+                const char *http_response_body = "Hello World!";
+                snprintf(client_state->out_buffer, sizeof(client_state->out_buffer),
+                         "HTTP/1.1 200 OK\r\n"
+                         "Content-Type: text/html\r\n"
+                         "Content-Length: %zu\r\n"
+                         "\r\n"
+                         "%s",
+                         strlen(http_response_body), http_response_body);
+                client_state->out_buffer_len = strlen(client_state->out_buffer);
+                client_state->out_buffer_sent = 0; // Reset sent counter
+
+                client_state->state = WRITING_RESPONSE; // Change state
+
+                // Modify epoll interest to EPOLLOUT
+                // We are done reading, now we want to write.
+                struct epoll_event new_event;
+                new_event.events = EPOLLOUT | EPOLLET; // Now primarily interested in writing
+                new_event.data.ptr = client_state;     // Keep the same client_state pointer
+                if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, current_fd, &new_event) == -1) {
+                    perror("epoll_ctl: MOD to EPOLLOUT failed");
+                    return 1; // Mark for closure on error
+                }
+                break; // Exit read loop, as we've processed the request and changed state
+            }
+
+            // If buffer is full and no full request, it's an error or too large request
+            if (client_state->in_buffer_len >= (sizeof(client_state->in_buffer) - 1)) {
+                printf("Client %d input buffer full, no complete request. Closing.\n", current_fd);
+                return 1;
+            }
+        }
+    }
+    return 0; // Connection remains open
+}
+
+// --- NEW: Function to handle writing data to a client socket ---
+// Returns 1 if the connection should be closed, 0 otherwise.
+int handle_write_event(client_state_t *client_state) {
+    int current_fd = client_state->fd;
+    ssize_t bytes_transferred;
+
+    // Only write if we are in the WRITING_RESPONSE state
+    if (client_state->state != WRITING_RESPONSE) {
+        // This shouldn't happen if state machine is correct, but defensive check
+        printf("Client %d received EPOLLOUT but not in WRITING_RESPONSE state.\n", current_fd);
+        return 1; // Close connection
+    }
+
+    // Calculate how much data is remaining to send
+    size_t remaining_to_send = client_state->out_buffer_len - client_state->out_buffer_sent;
+
+    if (remaining_to_send > 0) {
+        // Attempt to send the remaining data
+        bytes_transferred = write(current_fd,
+                                  client_state->out_buffer + client_state->out_buffer_sent,
+                                  remaining_to_send);
+
+        if (bytes_transferred == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Kernel send buffer is full, try again later when EPOLLOUT fires again.
+                printf("Client socket %d send buffer full, retrying write.\n", current_fd);
+                return 0; // Connection remains open, wait for next EPOLLOUT
+            } else {
+                perror("write client socket failed");
+                return 1; // Fatal write error, mark for closure
+            }
+        } else if (bytes_transferred == 0) {
+            // This typically means the connection was closed by peer during write.
+            printf("Client socket %d closed connection during write.\n", current_fd);
+            return 1;
+        } else {
+            // Successfully sent some data
+            client_state->out_buffer_sent += bytes_transferred;
+            printf("Sent %zd bytes to client %d. Total sent: %zu/%zu.\n",
+                   bytes_transferred, current_fd, client_state->out_buffer_sent, client_state->out_buffer_len);
+
+            // Check if all data has been sent
+            if (client_state->out_buffer_sent >= client_state->out_buffer_len) {
+                printf("All response data sent to client %d. Closing connection.\n", current_fd);
+                return 1; // All done, mark for closure
+            }
+            // If not all sent, EPOLLOUT will fire again (due to EPOLLET) when more buffer space is available.
+            return 0; // Connection remains open, more data to send
+        }
+    } else {
+        // This case should ideally not be reached if logic is correct,
+        // but means EPOLLOUT fired when there was nothing to send.
+        printf("EPOLLOUT on client %d but nothing to send. Closing.\n", current_fd);
+        return 1;
+    }
+}
+
+// --- NEW: Function to handle closing a client connection ---
+void close_client_connection(int epoll_fd, client_state_t *client_state) {
+    int current_fd = client_state->fd;
+
+    // Attempt to remove the file descriptor from the epoll instance FIRST.
+    // Check for ENOENT (No such file or directory) which means the FD was
+    // already implicitly removed or never added, which is not a critical error here.
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, current_fd, NULL) == -1 && errno != ENOENT) {
+         perror("epoll_ctl: DEL client socket failed"); // Only print if it's a real error
+    }
+    close(current_fd); // Now close the socket itself.
+    free(client_state); // Free the allocated client state memory
+    printf("Client socket %d fully closed and removed from epoll.\n", current_fd);
+}
+
+
 // Function to handle events on an existing client socket.
-// It reads all available data or detects disconnection/errors, and now sends a simple HTTP response.
-// 'current_fd' is the client socket file descriptor.
-// 'event_flags' are the specific events reported by epoll_wait for this FD.
+// It orchestrates calls to read, write, or close functions based on event flags and client state.
 void handle_client_event(int epoll_fd, struct epoll_event *event_ptr) {
-    // --- NEW: Retrieve client state from event_ptr ---
     client_state_t *client_state = (client_state_t *)event_ptr->data.ptr;
     int current_fd = client_state->fd;
     uint32_t event_flags = event_ptr->events;
-
-    ssize_t bytes_transferred;
-    int should_close = 0; // Flag to indicate if the socket should be closed
+    int should_close = 0; // Flag to indicate if the connection should be closed
 
     // Check for connection closed by peer (EPOLLRDHUP), hang up (EPOLLHUP), or error (EPOLLERR)
-    // These flags indicate the client has disconnected or an error occurred.
     if (event_flags & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
         printf("Client socket %d disconnected or error occurred.\n", current_fd);
         should_close = 1; // Mark for closure
     }
     // Handle EPOLLIN event: Data available to read
-    // This condition is only checked if the socket is not already marked for closure.
     else if (event_flags & EPOLLIN) {
-        // Only read if we are in the READING_REQUEST state
-        if (client_state->state == READING_REQUEST) {
-            // In edge-triggered mode, it's crucial to read ALL available data
-            // until read() returns EAGAIN/EWOULDBLOCK or 0 (EOF).
-            while (1) {
-                // Read into the buffer, ensuring we don't overflow
-                bytes_transferred = read(current_fd,
-                                         client_state->in_buffer + client_state->in_buffer_len,
-                                         sizeof(client_state->in_buffer) - 1 - client_state->in_buffer_len);
-
-                if (bytes_transferred == -1) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                        // No more data to read for now. Connection is still open.
-                        break; // Exit read loop, wait for next event
-                    } else {
-                        perror("read client socket failed");
-                        should_close = 1; // Fatal read error, mark for closure
-                        break;
-                    }
-                } else if (bytes_transferred == 0) {
-                    // Client closed their side of the connection (End-of-File)
-                    printf("Client socket %d closed connection during read.\n", current_fd);
-                    should_close = 1; // Mark for closure
-                    break; // Exit read loop
-                } else {
-                    // Successfully read some data
-                    client_state->in_buffer_len += bytes_transferred;
-                    client_state->in_buffer[client_state->in_buffer_len] = '\0'; // Null-terminate for printing
-
-                    printf("Received %zd bytes from client %d. Total: %zu. Data: '%s'\n",
-                           bytes_transferred, current_fd, client_state->in_buffer_len, client_state->in_buffer);
-
-                    // --- NEW: Simple HTTP request completion check ---
-                    // For simplicity, we check for "\r\n\r\n" to signify end of headers.
-                    // A real parser would be more robust.
-                    if (strstr(client_state->in_buffer, "\r\n\r\n") != NULL) {
-                        printf("Full HTTP request received from client %d. Preparing response.\n", current_fd);
-
-                        // Prepare the HTTP response
-                        const char *http_response_body = "Hello World!";
-                        snprintf(client_state->out_buffer, sizeof(client_state->out_buffer),
-                                 "HTTP/1.1 200 OK\r\n"
-                                 "Content-Type: text/html\r\n"
-                                 "Content-Length: %zu\r\n"
-                                 "\r\n"
-                                 "%s",
-                                 strlen(http_response_body), http_response_body);
-                        client_state->out_buffer_len = strlen(client_state->out_buffer);
-                        client_state->out_buffer_sent = 0; // Reset sent counter
-
-                        client_state->state = WRITING_RESPONSE; // Change state
-
-                        // --- MODIFIED: Change epoll interest to EPOLLOUT ---
-                        // We are done reading, now we want to write.
-                        // Modify the existing epoll entry for this socket.
-                        struct epoll_event new_event;
-                        new_event.events = EPOLLOUT | EPOLLET; // Now primarily interested in writing
-                        new_event.data.ptr = client_state;     // Keep the same client_state pointer
-                        if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, current_fd, &new_event) == -1) {
-                            perror("epoll_ctl: MOD to EPOLLOUT failed");
-                            should_close = 1; // Mark for closure on error
-                        }
-                        break; // Exit read loop, as we've processed the request and changed state
-                    }
-
-                    // If buffer is full and no full request, it's an error or too large request
-                    if (client_state->in_buffer_len >= (sizeof(client_state->in_buffer) - 1)) {
-                        printf("Client %d input buffer full, no complete request. Closing.\n", current_fd);
-                        should_close = 1;
-                        break;
-                    }
-                }
-            }
-        }
+        should_close = handle_read_event(client_state, epoll_fd);
     }
     // Handle EPOLLOUT event: Socket is ready for writing.
     else if (event_flags & EPOLLOUT) {
-        // Only write if we are in the WRITING_RESPONSE state
-        if (client_state->state == WRITING_RESPONSE) {
-            // Calculate how much data is remaining to send
-            size_t remaining_to_send = client_state->out_buffer_len - client_state->out_buffer_sent;
-
-            if (remaining_to_send > 0) {
-                // Attempt to send the remaining data
-                bytes_transferred = write(current_fd,
-                                          client_state->out_buffer + client_state->out_buffer_sent,
-                                          remaining_to_send);
-
-                if (bytes_transferred == -1) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                        // Kernel send buffer is full, try again later when EPOLLOUT fires again.
-                        printf("Client socket %d send buffer full, retrying write.\n", current_fd);
-                        // Do not set should_close, wait for next EPOLLOUT
-                    } else {
-                        perror("write client socket failed");
-                        should_close = 1; // Fatal write error, mark for closure
-                    }
-                } else if (bytes_transferred == 0) {
-                    // This typically means the connection was closed by peer during write.
-                    printf("Client socket %d closed connection during write.\n", current_fd);
-                    should_close = 1;
-                } else {
-                    // Successfully sent some data
-                    client_state->out_buffer_sent += bytes_transferred;
-                    printf("Sent %zd bytes to client %d. Total sent: %zu/%zu.\n",
-                           bytes_transferred, current_fd, client_state->out_buffer_sent, client_state->out_buffer_len);
-
-                    // Check if all data has been sent
-                    if (client_state->out_buffer_sent >= client_state->out_buffer_len) {
-                        printf("All response data sent to client %d. Closing connection.\n", current_fd);
-                        should_close = 1; // All done, mark for closure
-                    }
-                    // If not all sent, EPOLLOUT will fire again (due to EPOLLET) when more buffer space is available.
-                }
-            } else {
-                // This case should ideally not be reached if logic is correct,
-                // but means EPOLLOUT fired when there was nothing to send.
-                printf("EPOLLOUT on client %d but nothing to send. Closing.\n", current_fd);
-                should_close = 1;
-            }
-        }
+        should_close = handle_write_event(client_state);
     }
 
-    // If the should_close flag is set, close the socket and remove it from epoll
+    // If any of the handlers or initial checks determined the connection should be closed
     if (should_close) {
-        // Attempt to remove the file descriptor from the epoll instance FIRST.
-        // Check for ENOENT (No such file or directory) which means the FD was
-        // already implicitly removed or never added, which is not a critical error here.
-        if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, current_fd, NULL) == -1 && errno != ENOENT) {
-             perror("epoll_ctl: DEL client socket failed"); // Only print if it's a real error
-        }
-        close(current_fd); // Now close the socket itself.
-        free(client_state); // --- NEW: Free the allocated client state memory ---
-        printf("Client socket %d fully closed and removed from epoll.\n", current_fd);
+        close_client_connection(epoll_fd, client_state);
     }
 }
 
