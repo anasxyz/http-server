@@ -15,6 +15,12 @@
 // Define buffer sizes for client input/output
 #define MAX_BUFFER_SIZE 4096
 
+// --- NEW: Define a hard cap for active clients to prevent memory exhaustion ---
+#define MAX_ACTIVE_CLIENTS 100 // Example: Allow up to 100 concurrent clients
+
+// --- NEW: Global counter for active client connections ---
+static int active_clients_count = 0;
+
 // --- Define states for our simple state machine ---
 typedef enum {
     READING_REQUEST,
@@ -32,7 +38,7 @@ typedef struct {
     char out_buffer[MAX_BUFFER_SIZE]; // Buffer for outgoing data
     size_t out_buffer_len;      // Total length of data to send from out_buffer
     size_t out_buffer_sent;     // How much of out_buffer has already been sent
-    int keep_alive;             // --- NEW: Flag to indicate if keep-alive is enabled for this connection (0 or 1) ---
+    int keep_alive;             // Flag to indicate if keep-alive is enabled for this connection (0 or 1)
 } client_state_t;
 
 
@@ -145,8 +151,15 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
             }
         }
 
+        // --- NEW: Check if we have reached the maximum client limit ---
+        if (active_clients_count >= MAX_ACTIVE_CLIENTS) {
+            printf("Client limit reached (%d). Rejecting new connection on socket %d.\n", MAX_ACTIVE_CLIENTS, conn_sock);
+            close(conn_sock); // Close the new connection immediately
+            continue;         // Try to accept next if any, but don't process this one
+        }
+
         // A new connection has been successfully accepted!
-        printf("New connection accepted on socket %d\n", conn_sock);
+        printf("New connection accepted on socket %d. Active clients: %d/%d\n", conn_sock, active_clients_count + 1, MAX_ACTIVE_CLIENTS);
 
         // Set the newly accepted client socket to non-blocking mode.
         // This ensures that future read/write operations on this client
@@ -169,7 +182,7 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
         client_state->in_buffer_len = 0;
         client_state->out_buffer_len = 0;
         client_state->out_buffer_sent = 0;
-        client_state->keep_alive = 0; // --- NEW: Initialize keep-alive flag to false ---
+        client_state->keep_alive = 0; // Initialize keep-alive flag to false
 
 
         // Add the new client socket to the epoll instance.
@@ -184,6 +197,9 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
             close(conn_sock);   // Close the problematic socket
             continue;           // Skip to the next potential connection
         }
+
+        // --- NEW: Increment active client count upon successful addition ---
+        active_clients_count++;
     }
 }
 
@@ -234,7 +250,7 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
             if (strstr(client_state->in_buffer, "\r\n\r\n") != NULL) {
                 printf("Full HTTP request received from client %d. Preparing response.\n", current_fd);
 
-                // --- NEW: Check for Keep-Alive header ---
+                // Check for Keep-Alive header
                 if (strstr(client_state->in_buffer, "Connection: keep-alive") != NULL) {
                     client_state->keep_alive = 1;
                     printf("Client %d requested Keep-Alive.\n", current_fd);
@@ -295,7 +311,7 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
 
 // --- Function to handle writing data to a client socket ---
 // Returns 1 if the connection should be closed, 0 otherwise.
-int handle_write_event(client_state_t *client_state, int epoll_fd) { // --- MODIFIED: Added epoll_fd parameter ---
+int handle_write_event(client_state_t *client_state, int epoll_fd) {
     int current_fd = client_state->fd;
     ssize_t bytes_transferred;
 
@@ -337,7 +353,7 @@ int handle_write_event(client_state_t *client_state, int epoll_fd) { // --- MODI
             // Check if all data has been sent
             if (client_state->out_buffer_sent >= client_state->out_buffer_len) {
                 printf("All response data sent to client %d.\n", current_fd);
-                // --- NEW: Decision based on Keep-Alive ---
+                // Decision based on Keep-Alive
                 if (client_state->keep_alive) {
                     printf("Keeping connection %d alive for next request.\n", current_fd);
                     client_state->state = READING_REQUEST; // Reset state for next request
@@ -345,7 +361,7 @@ int handle_write_event(client_state_t *client_state, int epoll_fd) { // --- MODI
                     client_state->out_buffer_len = 0;      // Clear output buffer state
                     client_state->out_buffer_sent = 0;
 
-                    // --- NEW: Modify epoll interest back to EPOLLIN ---
+                    // Modify epoll interest back to EPOLLIN
                     struct epoll_event new_event;
                     new_event.events = EPOLLIN | EPOLLET; // Now interested in reading again
                     new_event.data.ptr = client_state;
@@ -383,6 +399,10 @@ void close_client_connection(int epoll_fd, client_state_t *client_state) {
     close(current_fd); // Now close the socket itself.
     free(client_state); // Free the allocated client state memory
     printf("Client socket %d fully closed and removed from epoll.\n", current_fd);
+
+    // --- NEW: Decrement active client count upon closure ---
+    active_clients_count--;
+    printf("Active clients: %d/%d\n", active_clients_count, MAX_ACTIVE_CLIENTS);
 }
 
 
@@ -405,7 +425,7 @@ void handle_client_event(int epoll_fd, struct epoll_event *event_ptr) {
     }
     // Handle EPOLLOUT event: Socket is ready for writing.
     else if (event_flags & EPOLLOUT) {
-        should_close = handle_write_event(client_state, epoll_fd); // --- MODIFIED: Pass epoll_fd ---
+        should_close = handle_write_event(client_state, epoll_fd);
     }
 
     // If any of the handlers or initial checks determined the connection should be closed
