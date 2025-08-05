@@ -32,6 +32,7 @@ typedef struct {
     char out_buffer[MAX_BUFFER_SIZE]; // Buffer for outgoing data
     size_t out_buffer_len;      // Total length of data to send from out_buffer
     size_t out_buffer_sent;     // How much of out_buffer has already been sent
+    int keep_alive;             // --- NEW: Flag to indicate if keep-alive is enabled for this connection (0 or 1) ---
 } client_state_t;
 
 
@@ -168,6 +169,7 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
         client_state->in_buffer_len = 0;
         client_state->out_buffer_len = 0;
         client_state->out_buffer_sent = 0;
+        client_state->keep_alive = 0; // --- NEW: Initialize keep-alive flag to false ---
 
 
         // Add the new client socket to the epoll instance.
@@ -185,7 +187,7 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
     }
 }
 
-// --- NEW: Function to handle reading data from a client socket ---
+// --- Function to handle reading data from a client socket ---
 // Returns 1 if the connection should be closed, 0 otherwise.
 int handle_read_event(client_state_t *client_state, int epoll_fd) {
     int current_fd = client_state->fd;
@@ -194,7 +196,7 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
     // Only read if we are in the READING_REQUEST state
     if (client_state->state != READING_REQUEST) {
         // This shouldn't happen if state machine is correct, but defensive check
-        printf("Client %d received EPOLLIN but not in READING_REQUEST state.\n", current_fd);
+        printf("Client %d received EPOLLIN but not in READING_REQUEST state. Closing.\n", current_fd);
         return 1; // Close connection as something unexpected happened
     }
 
@@ -232,15 +234,38 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
             if (strstr(client_state->in_buffer, "\r\n\r\n") != NULL) {
                 printf("Full HTTP request received from client %d. Preparing response.\n", current_fd);
 
+                // --- NEW: Check for Keep-Alive header ---
+                if (strstr(client_state->in_buffer, "Connection: keep-alive") != NULL) {
+                    client_state->keep_alive = 1;
+                    printf("Client %d requested Keep-Alive.\n", current_fd);
+                } else {
+                    client_state->keep_alive = 0;
+                    printf("Client %d did not request Keep-Alive.\n", current_fd);
+                }
+
                 // Prepare the HTTP response
                 const char *http_response_body = "Hello World!";
-                snprintf(client_state->out_buffer, sizeof(client_state->out_buffer),
+                char http_headers[256]; // Buffer for headers
+                
+                // Construct basic headers
+                snprintf(http_headers, sizeof(http_headers),
                          "HTTP/1.1 200 OK\r\n"
                          "Content-Type: text/html\r\n"
-                         "Content-Length: %zu\r\n"
-                         "\r\n"
-                         "%s",
-                         strlen(http_response_body), http_response_body);
+                         "Content-Length: %zu\r\n",
+                         strlen(http_response_body));
+
+                // Append Keep-Alive header if requested
+                if (client_state->keep_alive) {
+                    strcat(http_headers, "Connection: Keep-Alive\r\n");
+                    // Optionally add Keep-Alive timeout/max headers for client guidance
+                    strcat(http_headers, "Keep-Alive: timeout=5, max=100\r\n");
+                }
+                
+                // Finalize headers and append body
+                snprintf(client_state->out_buffer, sizeof(client_state->out_buffer),
+                         "%s\r\n%s",
+                         http_headers, http_response_body);
+
                 client_state->out_buffer_len = strlen(client_state->out_buffer);
                 client_state->out_buffer_sent = 0; // Reset sent counter
 
@@ -268,16 +293,16 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
     return 0; // Connection remains open
 }
 
-// --- NEW: Function to handle writing data to a client socket ---
+// --- Function to handle writing data to a client socket ---
 // Returns 1 if the connection should be closed, 0 otherwise.
-int handle_write_event(client_state_t *client_state) {
+int handle_write_event(client_state_t *client_state, int epoll_fd) { // --- MODIFIED: Added epoll_fd parameter ---
     int current_fd = client_state->fd;
     ssize_t bytes_transferred;
 
     // Only write if we are in the WRITING_RESPONSE state
     if (client_state->state != WRITING_RESPONSE) {
         // This shouldn't happen if state machine is correct, but defensive check
-        printf("Client %d received EPOLLOUT but not in WRITING_RESPONSE state.\n", current_fd);
+        printf("Client %d received EPOLLOUT but not in WRITING_RESPONSE state. Closing.\n", current_fd);
         return 1; // Close connection
     }
 
@@ -311,8 +336,28 @@ int handle_write_event(client_state_t *client_state) {
 
             // Check if all data has been sent
             if (client_state->out_buffer_sent >= client_state->out_buffer_len) {
-                printf("All response data sent to client %d. Closing connection.\n", current_fd);
-                return 1; // All done, mark for closure
+                printf("All response data sent to client %d.\n", current_fd);
+                // --- NEW: Decision based on Keep-Alive ---
+                if (client_state->keep_alive) {
+                    printf("Keeping connection %d alive for next request.\n", current_fd);
+                    client_state->state = READING_REQUEST; // Reset state for next request
+                    client_state->in_buffer_len = 0;       // Clear input buffer
+                    client_state->out_buffer_len = 0;      // Clear output buffer state
+                    client_state->out_buffer_sent = 0;
+
+                    // --- NEW: Modify epoll interest back to EPOLLIN ---
+                    struct epoll_event new_event;
+                    new_event.events = EPOLLIN | EPOLLET; // Now interested in reading again
+                    new_event.data.ptr = client_state;
+                    if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, current_fd, &new_event) == -1) {
+                        perror("epoll_ctl: MOD to EPOLLIN for keep-alive failed");
+                        return 1; // Close on error
+                    }
+                    return 0; // Connection kept alive
+                } else {
+                    printf("Closing connection %d (Keep-Alive not requested).\n", current_fd);
+                    return 1; // All done, mark for closure
+                }
             }
             // If not all sent, EPOLLOUT will fire again (due to EPOLLET) when more buffer space is available.
             return 0; // Connection remains open, more data to send
@@ -325,7 +370,7 @@ int handle_write_event(client_state_t *client_state) {
     }
 }
 
-// --- NEW: Function to handle closing a client connection ---
+// --- Function to handle closing a client connection ---
 void close_client_connection(int epoll_fd, client_state_t *client_state) {
     int current_fd = client_state->fd;
 
@@ -360,7 +405,7 @@ void handle_client_event(int epoll_fd, struct epoll_event *event_ptr) {
     }
     // Handle EPOLLOUT event: Socket is ready for writing.
     else if (event_flags & EPOLLOUT) {
-        should_close = handle_write_event(client_state);
+        should_close = handle_write_event(client_state, epoll_fd); // --- MODIFIED: Pass epoll_fd ---
     }
 
     // If any of the handlers or initial checks determined the connection should be closed
