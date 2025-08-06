@@ -6,8 +6,8 @@
 #include "server.h"
 
 // A helper function to parse all headers into a structured array
-static void parse_all_headers(client_state_t *client_state) {
-    char *header_start = strstr(client_state->in_buffer, "\r\n") + 2;
+static void parse_all_headers(client_state_t *client_state, char *buffer) {
+    char *header_start = strstr(buffer, "\r\n") + 2;
     char *header_line;
     char *saveptr;
     
@@ -55,15 +55,23 @@ void parse_http_request(client_state_t *client_state) {
     char *header_end = strstr(client_state->in_buffer, "\r\n\r\n");
     if (!header_end) return;
 
+	// --- NEW: Isolate the header section for parsing ---
+    char header_section[MAX_BUFFER_SIZE];
+    size_t header_len = header_end - client_state->in_buffer;
+    strncpy(header_section, client_state->in_buffer, header_len);
+    header_section[header_len] = '\0';
+
     // Parse request line and headers
-    char *request_line_end = strstr(client_state->in_buffer, "\r\n");
+	char *request_line_end = strstr(header_section, "\r\n");
     if (request_line_end) {
         *request_line_end = '\0';
-        sscanf(client_state->in_buffer, "%15s %1023s %15s",
+        sscanf(header_section, "%15s %1023s %15s",
                client_state->method, client_state->path, client_state->http_version);
         *request_line_end = '\r';
     }
-    parse_all_headers(client_state);
+
+	//
+    parse_all_headers(client_state, header_section);
 
     // Check for Keep-Alive
     const char *connection_header = get_header_value(client_state, "Connection");

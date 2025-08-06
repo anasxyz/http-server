@@ -352,6 +352,12 @@ int handle_write_event(client_state_t *client_state, int epoll_fd) {
 void close_client_connection(int epoll_fd, client_state_t *client_state) {
     int current_fd = client_state->fd;
 
+		// --- NEW: Free the body buffer if it was allocated ---
+    if (client_state->body_buffer != NULL) {
+        free(client_state->body_buffer);
+        client_state->body_buffer = NULL;
+    }
+
     // Attempt to remove the file descriptor from the epoll instance FIRST.
     // Check for ENOENT (No such file or directory) which means the FD was
     // already implicitly removed or never added, which is not a critical error here.
@@ -408,6 +414,20 @@ void handle_sigint(int sig) {
     running = 0; // Set the global flag to stop the main loop
 }
 
+void cleanup_client_state(client_state_t *client_state, int epoll_fd) {
+    if (client_state->body_buffer != NULL) {
+        free(client_state->body_buffer);
+        client_state->body_buffer = NULL; // Best practice to avoid dangling pointers
+    }
+
+    // Remove the file descriptor from the epoll instance
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_state->fd, NULL) == -1) {
+        perror("epoll_ctl: DEL failed in cleanup");
+    }
+    
+    close(client_state->fd);
+    free(client_state);
+}
 
 int main() {
     int listen_sock;            // The socket that listens for new incoming connections
