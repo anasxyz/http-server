@@ -11,18 +11,8 @@
 #include <sys/select.h> // For FD_SETSIZE, a common max FD limit
 #include <signal.h>     // --- NEW: For signal handling (SIGINT) ---
 
-// Define the port number for our server
-#define PORT 8080
-// Define the maximum number of events epoll_wait can return at once
-#define MAX_EVENTS 10
-// Define buffer sizes for client input/output
-#define MAX_BUFFER_SIZE 4096
-
-// Define a hard cap for active clients to prevent memory exhaustion
-#define MAX_ACTIVE_CLIENTS 100 // Example: Allow up to 100 concurrent clients
-
-// Define the Keep-Alive idle timeout in seconds
-#define KEEPALIVE_IDLE_TIMEOUT_SECONDS 5 // Close connection if idle for 5 seconds
+#include "server.h"
+#include "parser.h"
 
 // Global counter for active client connections
 static int active_clients_count = 0;
@@ -31,27 +21,6 @@ static int active_clients_count = 0;
 // 'volatile' ensures the compiler doesn't optimize away checks on this variable,
 // as it can be changed by an external signal handler.
 volatile int running = 1;
-
-// --- Define states for our simple state machine ---
-typedef enum {
-    READING_REQUEST,
-    WRITING_RESPONSE,
-    // CLOSING_CONNECTION is handled implicitly by returning 1 from handler functions
-    // indicating the connection should be closed.
-} client_state_enum;
-
-// --- Structure to hold per-client state ---
-typedef struct {
-    int fd;                     // The client's file descriptor
-    client_state_enum state;    // Current state of this client's interaction
-    char in_buffer[MAX_BUFFER_SIZE]; // Buffer for incoming data
-    size_t in_buffer_len;       // Current length of data in in_buffer
-    char out_buffer[MAX_BUFFER_SIZE]; // Buffer for outgoing data
-    size_t out_buffer_len;      // Total length of data to send from out_buffer
-    size_t out_buffer_sent;     // How much of out_buffer has already been sent
-    int keep_alive;             // Flag to indicate if keep-alive is enabled for this connection (0 or 1)
-    time_t last_activity_time;  // Timestamp of the last activity on this connection
-} client_state_t;
 
 // Global array to map file descriptors to client state structs
 // FD_SETSIZE is a common system-defined limit for file descriptors (often 1024).
@@ -275,43 +244,8 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
             // A real parser would be more robust.
             if (strstr(client_state->in_buffer, "\r\n\r\n") != NULL) {
                 printf("Full HTTP request received from client %d. Preparing response.\n", current_fd);
-
-                // Check for Keep-Alive header
-                if (strstr(client_state->in_buffer, "Connection: keep-alive") != NULL) {
-                    client_state->keep_alive = 1;
-                    printf("Client %d requested Keep-Alive.\n", current_fd);
-                } else {
-                    client_state->keep_alive = 0;
-                    printf("Client %d did not request Keep-Alive.\n", current_fd);
-                }
-
-                // Prepare the HTTP response
-                const char *http_response_body = "Hello World!";
-                char http_headers[256]; // Buffer for headers
-                
-                // Construct basic headers
-                snprintf(http_headers, sizeof(http_headers),
-                         "HTTP/1.1 200 OK\r\n"
-                         "Content-Type: text/html\r\n"
-                         "Content-Length: %zu\r\n",
-                         strlen(http_response_body));
-
-                // Append Keep-Alive header if requested
-                if (client_state->keep_alive) {
-                    strcat(http_headers, "Connection: keep-alive\r\n");
-                    // Optionally add Keep-Alive timeout/max headers for client guidance
-                    char keep_alive_info[64];
-                    snprintf(keep_alive_info, sizeof(keep_alive_info), "Keep-Alive: timeout=%d, max=100\r\n", KEEPALIVE_IDLE_TIMEOUT_SECONDS);
-                    strcat(http_headers, keep_alive_info);
-                }
-                
-                // Finalize headers and append body
-                snprintf(client_state->out_buffer, sizeof(client_state->out_buffer),
-                         "%s\r\n%s",
-                         http_headers, http_response_body);
-
-                client_state->out_buffer_len = strlen(client_state->out_buffer);
-                client_state->out_buffer_sent = 0; // Reset sent counter
+								parse_http_request(client_state);
+								create_http_response(client_state);
 
                 client_state->state = WRITING_RESPONSE; // Change state
 
