@@ -3,7 +3,11 @@
 #ifndef SERVER_H
 #define SERVER_H
 
+#include <sys/types.h>
 #include <time.h>
+#include <glib.h>
+
+extern GHashTable *client_states_map;
 
 // Shared constants
 #define PORT 8080
@@ -51,6 +55,8 @@ typedef struct client_state_t {
 		size_t body_buffer_size; // The current size of the body buffer
 		size_t content_length;   // Total expected body length from Content-Length header
 		size_t body_received;    // Number of body bytes read so far
+	
+    ssize_t timeout_heap_index; // NEW: Store the index of the client in the heap
 } client_state_t;
 
 // Function prototypes would also go here.
