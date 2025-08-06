@@ -24,6 +24,7 @@ typedef struct {
 
 typedef enum {
     READING_REQUEST,
+    READING_BODY, // NEW state for body parsing
     WRITING_RESPONSE,
 } client_state_enum;
 
@@ -45,6 +46,11 @@ typedef struct client_state_t {
     char http_version[16];
     http_header_t parsed_headers[MAX_HEADERS];
     int header_count;
+
+		char *body_buffer; // Dynamically allocated buffer for the body
+		size_t body_buffer_size; // The current size of the body buffer
+		size_t content_length;   // Total expected body length from Content-Length header
+		size_t body_received;    // Number of body bytes read so far
 } client_state_t;
 
 // Function prototypes would also go here.
