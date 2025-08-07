@@ -6,7 +6,7 @@
 #include "server.h" // Includes all necessary structs and constants
 
 // Function declarations
-void parse_http_request(client_state_t *client_state);
+client_state_enum_t parse_http_request(client_state_t *client_state);
 const char* get_header_value(client_state_t *client_state, const char *key);
 void create_http_response(client_state_t *client_state);
 

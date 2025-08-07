@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h> // For strcasecmp
+#include <string.h>
 
 #include "parser.h"
 #include "server.h"
@@ -51,18 +52,19 @@ const char* get_header_value(client_state_t *client_state, const char *key) {
 }
 
 // The main function to parse the entire request
-void parse_http_request(client_state_t *client_state) {
+// It now returns the next state instead of setting it directly.
+client_state_enum_t parse_http_request(client_state_t *client_state) {
     char *header_end = strstr(client_state->in_buffer, "\r\n\r\n");
-    if (!header_end) return;
+    if (!header_end) return STATE_READING_REQUEST; // Should not happen here, but a safety check
 
-	// --- NEW: Isolate the header section for parsing ---
+    // Isolate the header section for parsing
     char header_section[MAX_BUFFER_SIZE];
     size_t header_len = header_end - client_state->in_buffer;
     strncpy(header_section, client_state->in_buffer, header_len);
     header_section[header_len] = '\0';
 
     // Parse request line and headers
-	char *request_line_end = strstr(header_section, "\r\n");
+    char *request_line_end = strstr(header_section, "\r\n");
     if (request_line_end) {
         *request_line_end = '\0';
         sscanf(header_section, "%15s %1023s %15s",
@@ -70,7 +72,6 @@ void parse_http_request(client_state_t *client_state) {
         *request_line_end = '\r';
     }
 
-	//
     parse_all_headers(client_state, header_section);
 
     // Check for Keep-Alive
@@ -93,45 +94,24 @@ void parse_http_request(client_state_t *client_state) {
             client_state->body_buffer = malloc(client_state->content_length + 1);
             if (!client_state->body_buffer) {
                 perror("malloc for body buffer failed");
-                client_state->state = WRITING_RESPONSE; // Or an error state
-                return;
+                return STATE_CLOSED; // Indicate a critical error
             }
         }
         
         memcpy(client_state->body_buffer, body_data_start, initial_body_data_len);
         client_state->body_received = initial_body_data_len;
-        client_state->body_buffer_size = client_state->content_length;
 
         if (client_state->body_received >= client_state->content_length) {
             client_state->body_buffer[client_state->content_length] = '\0';
-            client_state->state = WRITING_RESPONSE;
             printf("Full POST request with body received on first read.\n");
+            return STATE_WRITING_RESPONSE;
         } else {
-            client_state->state = READING_BODY;
             printf("Partial POST request body received, transitioning to READING_BODY state.\n");
+            return STATE_READING_BODY;
         }
     } else {
-        client_state->state = WRITING_RESPONSE;
         printf("Request is complete (no body or not a POST).\n");
-    }
-
-    // Printing the parsed request details
-    printf("Parsed Request from client %d:\n", client_state->fd);
-    printf("  Method: %s\n", client_state->method);
-    printf("  Path: %s\n", client_state->path);
-    printf("  Version: %s\n", client_state->http_version);
-    printf("  Keep-Alive: %s\n", client_state->keep_alive ? "true" : "false");
-    printf("  Header Count: %d\n", client_state->header_count);
-    for (int i = 0; i < client_state->header_count; i++) {
-        printf("    - %s: %s\n", client_state->parsed_headers[i].key, client_state->parsed_headers[i].value);
-    }
-
-    if (client_state->body_buffer && client_state->body_received > 0) {
-        printf("  Request Body (first %zu bytes):\n", client_state->body_received);
-        for (size_t i = 0; i < client_state->body_received; i++) {
-            putchar(client_state->body_buffer[i]);
-        }
-        printf("\n");
+        return STATE_WRITING_RESPONSE;
     }
 }
 
