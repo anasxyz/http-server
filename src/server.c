@@ -407,7 +407,7 @@ void handle_client_event(int epoll_fd, struct epoll_event *event_ptr) {
 }
 
 // Signal handler function for SIGINT (Ctrl+C)
-void handle_sigint(int sig) {
+void handle_sigint() {
   // printf("\nINFO: SIGINT received. Shutting down server gracefully...\n");
   running = 0;
 }

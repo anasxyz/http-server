@@ -71,7 +71,7 @@ int setup_listening_socket(int port);
 void handle_new_connection(int listen_sock, int epoll_fd);
 void handle_client_event(int epoll_fd, struct epoll_event *event_ptr);
 void close_client_connection(int epoll_fd, client_state_t *client_state);
-void handle_sigint(int sig);
+void handle_sigint();
 
 // New state transition function
 void transition_state(int epoll_fd, client_state_t *client, client_state_enum_t new_state);
