@@ -23,5 +23,6 @@ void remove_min_timeout();
 long get_next_timeout_ms();
 ssize_t find_fd_index(int fd);
 void remove_timeout_by_fd(int fd);
+void update_timeout(int fd, time_t expires);
 
 #endif // MINHEAP_UTIL_H

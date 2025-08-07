@@ -146,3 +146,25 @@ void remove_timeout_by_fd(int fd) {
         }
     }
 }
+
+void update_timeout(int fd, time_t expires) {
+  client_state_t *client_state =
+      g_hash_table_lookup(client_states_map, GINT_TO_POINTER(fd));
+  if (client_state == NULL || client_state->timeout_heap_index == -1) {
+    // If not in heap, add it
+    add_timeout(fd, expires);
+    return;
+  }
+
+  size_t index = client_state->timeout_heap_index;
+  timeout_heap[index].expires = expires;
+
+  // Check if we need to heapify up or down
+  if (index > 0 &&
+      timeout_heap[index].expires < timeout_heap[(index - 1) / 2].expires) {
+    heapify_up(index);
+  } else {
+    heapify_down(index);
+  }
+}
+

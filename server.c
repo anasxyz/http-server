@@ -1,16 +1,16 @@
-#include <errno.h> // For errno and EWOULDBLOCK/EAGAIN
-#include <fcntl.h> // For fcntl (file control) to set non-blocking mode
+#include <errno.h>
+#include <fcntl.h>
 #include <glib.h>
-#include <netinet/in.h> // For sockaddr_in structure
-#include <signal.h>     // For signal handling (SIGINT)
-#include <stdio.h>      // For standard I/O functions like printf, perror
-#include <stdlib.h>     // For general utilities like exit, malloc, free
-#include <string.h>     // For string manipulation like memset, strlen, strstr
-#include <sys/epoll.h>  // For epoll functions
-#include <sys/select.h> // For FD_SETSIZE, a common max FD limit
-#include <sys/socket.h> // For socket, bind, listen, accept functions
-#include <time.h>       // For time() function to get current time
-#include <unistd.h>     // For close function, read, write
+#include <netinet/in.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/epoll.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "minheap_util.h"
 #include "parser.h"
@@ -25,18 +25,6 @@ volatile int running = 1;
 // Global hash table to store client states
 GHashTable *client_states_map = NULL;
 
-// --- Helper Functions ---
-
-// Function to print the current state of the timeout min-heap
-void print_heap_state() {
-  if (heap_size == 0) {
-    printf("DEBUG: Timeout heap is empty.\n");
-  } else {
-    printf("DEBUG: Timeout heap size: %zu. Next timeout for FD %d at %ld.\n",
-           heap_size, timeout_heap[0].fd, timeout_heap[0].expires);
-  }
-}
-
 // Function to handle closing a client connection
 void close_client_connection(int epoll_fd, client_state_t *client_state) {
   if (client_state == NULL) {
@@ -44,7 +32,7 @@ void close_client_connection(int epoll_fd, client_state_t *client_state) {
   }
 
   int current_fd = client_state->fd;
-  printf("INFO: Initiating closure for client socket %d.\n", current_fd);
+  // printf("INFO: Initiating closure for client socket %d.\n", current_fd);
 
   if (client_state->timeout_heap_index != -1) {
     remove_timeout_by_fd(current_fd);
@@ -59,12 +47,10 @@ void close_client_connection(int epoll_fd, client_state_t *client_state) {
 
   g_hash_table_remove(client_states_map, GINT_TO_POINTER(current_fd));
 
-  printf("INFO: Client socket %d fully closed and removed. 🚪\n", current_fd);
+  // printf("INFO: Client socket %d fully closed and removed.\n", current_fd);
 
   active_clients_count--;
-  printf("\n===============================================\n");
-  printf("INFO: Active clients: %d\n", active_clients_count);
-  printf("===============================================\n");
+  // printf("INFO: Active clients: %d\n", active_clients_count);
 }
 
 // --- The state transition function ---
@@ -74,12 +60,18 @@ void transition_state(int epoll_fd, client_state_t *client,
     return;
   }
 
-  printf("INFO: Client %d transitioning from state %d to state %d.\n",
-         client->fd, client->state, new_state);
+  // printf("INFO: Client %d transitioning from state %d to state %d.\n",
+  // client->fd, client->state, new_state);
 
-  // Always remove the existing timeout before a state change
-  if (client->timeout_heap_index != -1) {
-    remove_timeout_by_fd(client->fd);
+  // Update the client's timeout on every state change to a reading state
+  if (new_state == STATE_READING_REQUEST || new_state == STATE_READING_BODY) {
+    time_t expires_at = time(NULL) + KEEPALIVE_IDLE_TIMEOUT_SECONDS;
+    update_timeout(client->fd, expires_at);
+  } else {
+    // For other states, remove the timeout as it's not idle
+    if (client->timeout_heap_index != -1) {
+      remove_timeout_by_fd(client->fd);
+    }
   }
 
   client->state = new_state;
@@ -88,23 +80,18 @@ void transition_state(int epoll_fd, client_state_t *client,
 
   switch (new_state) {
   case STATE_READING_REQUEST:
+    // Reset buffers and other state variables
     client->in_buffer_len = 0;
     client->out_buffer_len = 0;
     client->out_buffer_sent = 0;
     client->body_received = 0;
     client->content_length = 0;
 
-    time_t expires_at = time(NULL) + KEEPALIVE_IDLE_TIMEOUT_SECONDS;
-    add_timeout(client->fd, expires_at);
-
     new_event.events = EPOLLIN | EPOLLET;
     epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event);
     break;
 
   case STATE_READING_BODY:
-    time_t body_expires_at = time(NULL) + KEEPALIVE_IDLE_TIMEOUT_SECONDS;
-    add_timeout(client->fd, body_expires_at);
-
     new_event.events = EPOLLIN | EPOLLET;
     epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event);
     break;
@@ -114,14 +101,11 @@ void transition_state(int epoll_fd, client_state_t *client,
     epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event);
     break;
 
-  case STATE_IDLE:
-    printf(
-        "INFO: Client %d is now IDLE, awaiting next request or timeout. ⏳\n",
-        client->fd);
-    break;
-
   case STATE_CLOSED:
     close_client_connection(epoll_fd, client);
+    break;
+
+  default:
     break;
   }
 }
@@ -176,8 +160,6 @@ int setup_listening_socket(int port) {
     close(listen_sock);
     return -1;
   }
-
-  printf("INFO: Server is listening for connections on port %d...👂\n", port);
 
   if (set_nonblocking(listen_sock) == -1) {
     close(listen_sock);
@@ -253,10 +235,10 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
   int current_fd = client_state->fd;
 
   client_state->last_activity_time = time(NULL);
-  remove_timeout_by_fd(current_fd);
   time_t expires_at = time(NULL) + KEEPALIVE_IDLE_TIMEOUT_SECONDS;
-  add_timeout(current_fd, expires_at);
+  update_timeout(current_fd, expires_at);
 
+  // Read loop
   while (1) {
     ssize_t bytes_transferred;
     size_t bytes_to_read;
@@ -286,6 +268,8 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
 
     bytes_transferred = read(current_fd, read_destination, bytes_to_read);
 
+    printf("INFO: Received request from Client %d.\n", current_fd);
+
     if (bytes_transferred == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         break;
@@ -294,7 +278,7 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
         return 1;
       }
     } else if (bytes_transferred == 0) {
-      printf("INFO: Client socket %d closed connection during read. 👋\n",
+      printf("INFO: Client socket %d closed connection during read.\n",
              current_fd);
       return 1;
     }
@@ -302,8 +286,13 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
     if (client_state->state == STATE_READING_REQUEST) {
       client_state->in_buffer_len += bytes_transferred;
       client_state->in_buffer[client_state->in_buffer_len] = '\0';
-      if (strstr(client_state->in_buffer, "\r\n\r\n")) {
-        printf("DEBUG: Received full headers for client %d.\n", current_fd);
+
+      // Check for end of headers with a more efficient character-by-character
+      // scan
+      char *headers_end = strstr(client_state->in_buffer, "\r\n\r\n");
+
+      if (headers_end) {
+        // printf("DEBUG: Received full headers for Client %d.\n", current_fd);
         int parse_success = parse_http_request(client_state);
 
         if (!parse_success) {
@@ -312,15 +301,15 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
           if (strcasecmp(client_state->method, "POST") == 0 &&
               client_state->content_length > 0) {
             if (client_state->body_received >= client_state->content_length) {
-              printf("DEBUG: Full POST body received. Preparing response for "
-                     "client %d.\n",
-                     current_fd);
+              // printf("DEBUG: Full body received on first read, transitioning
+              // to WRITING_RESPONSE for Client %d.\n", current_fd);
+              printf("DEBUG: Full body for Client %d: %s\n", current_fd, client_state->body_buffer);
+
               create_http_response(client_state);
               transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
             } else {
-              printf("DEBUG: Partial POST body received, transitioning to "
-                     "READING_BODY for client %d.\n",
-                     current_fd);
+              // printf("DEBUG: Partial body received on first read,
+              // transitioning to READING_BODY for Client %d.\n", current_fd);
               transition_state(epoll_fd, client_state, STATE_READING_BODY);
             }
           } else {
@@ -333,8 +322,8 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
       client_state->body_received += bytes_transferred;
       if (client_state->body_received >= client_state->content_length) {
         client_state->body_buffer[client_state->content_length] = '\0';
-        printf("DEBUG: Full body received for client %d. Total size: %zu.\n",
-               current_fd, client_state->content_length);
+        // printf("DEBUG: Full body finally received, transitioning to WRITING_RESPONSE for Client %d\n", current_fd); 
+				printf("DEBUG: Full body for Client %d: %s\n", current_fd, client_state->body_buffer);
         create_http_response(client_state);
         transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
       }
@@ -350,9 +339,7 @@ int handle_write_event(client_state_t *client_state, int epoll_fd) {
   ssize_t bytes_transferred;
 
   if (client_state->state != STATE_WRITING_RESPONSE) {
-    printf("WARNING: Client %d received EPOLLOUT but not in WRITING_RESPONSE "
-           "state. Closing.\n",
-           current_fd);
+    // printf("WARNING: Client %d received EPOLLOUT but not in WRITING_RESPONSE state. Closing.\n", current_fd);
     transition_state(epoll_fd, client_state, STATE_CLOSED);
     return 0;
   }
@@ -367,27 +354,21 @@ int handle_write_event(client_state_t *client_state, int epoll_fd) {
 
     if (bytes_transferred == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        // Send buffer full, we'll get another EPOLLOUT event
         return 0;
       } else {
         perror("write client socket failed");
         transition_state(epoll_fd, client_state, STATE_CLOSED);
         return 0;
       }
-    } else if (bytes_transferred == 0) {
-      printf("WARNING: Client socket %d closed connection during write.\n",
-             current_fd);
-      transition_state(epoll_fd, client_state, STATE_CLOSED);
-      return 0;
     } else {
       client_state->out_buffer_sent += bytes_transferred;
 
       if (client_state->out_buffer_sent >= client_state->out_buffer_len) {
-        printf("DEBUG: All response data sent to client %d. ✅\n", current_fd);
+        printf("INFO: Response data sent to Client %d.\n", current_fd);
         if (client_state->keep_alive) {
           transition_state(epoll_fd, client_state, STATE_READING_REQUEST);
         } else {
-          printf("INFO: Closing connection %d (Keep-Alive not requested).\n",
+          printf("INFO: Closing connection for Client %d (keep-alive not requested).\n",
                  current_fd);
           transition_state(epoll_fd, client_state, STATE_CLOSED);
         }
@@ -395,8 +376,8 @@ int handle_write_event(client_state_t *client_state, int epoll_fd) {
       return 0;
     }
   } else {
-    printf("DEBUG: EPOLLOUT on client %d but nothing to send. Closing.\n",
-           current_fd);
+    // printf("DEBUG: EPOLLOUT on client %d but nothing to send. Closing.\n",
+    // current_fd);
     transition_state(epoll_fd, client_state, STATE_CLOSED);
     return 0;
   }
@@ -406,14 +387,14 @@ int handle_write_event(client_state_t *client_state, int epoll_fd) {
 void handle_client_event(int epoll_fd, struct epoll_event *event_ptr) {
   client_state_t *client_state = (client_state_t *)event_ptr->data.ptr;
   if (client_state == NULL) {
-    fprintf(stderr, "handle_client_event: client_state is NULL. ❌\n");
+    fprintf(stderr, "handle_client_event: client_state is NULL.\n");
     return;
   }
   int current_fd = client_state->fd;
   uint32_t event_flags = event_ptr->events;
 
   if (event_flags & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
-    printf("INFO: Client socket %d disconnected or error occurred. 💀\n",
+    printf("INFO: Client %d disconnected or error occurred.\n",
            current_fd);
     transition_state(epoll_fd, client_state, STATE_CLOSED);
   } else if (event_flags & EPOLLIN) {
@@ -427,7 +408,7 @@ void handle_client_event(int epoll_fd, struct epoll_event *event_ptr) {
 
 // Signal handler function for SIGINT (Ctrl+C)
 void handle_sigint(int sig) {
-  printf("\nINFO: SIGINT received. Shutting down server gracefully...👋\n");
+  // printf("\nINFO: SIGINT received. Shutting down server gracefully...\n");
   running = 0;
 }
 
@@ -443,7 +424,6 @@ void cleanup_client_state_on_destroy(gpointer data) {
   free(client_state);
 }
 
-// --- Main Function ---
 int main() {
   int listen_sock;
   int epoll_fd;
@@ -456,7 +436,7 @@ int main() {
                                             cleanup_client_state_on_destroy);
   init_min_heap();
 
-  printf("INFO: Starting simple epoll server on port %d. 🚀\n", PORT);
+  printf("INFO: Server listening on port %d.\n", PORT);
 
   if (signal(SIGINT, handle_sigint) == SIG_ERR) {
     perror("signal registration failed");
@@ -488,8 +468,7 @@ int main() {
     long epoll_timeout_ms = get_next_timeout_ms();
 
     if (heap_size > 0) {
-      printf("DEBUG: Next epoll_wait timeout: %ldms. Heap size: %zu.\n",
-             epoll_timeout_ms, heap_size);
+      // printf("DEBUG: Next epoll_wait timeout: %ldms. Heap size: %zu.\n", epoll_timeout_ms, heap_size);
     }
 
     num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, epoll_timeout_ms);
@@ -507,7 +486,7 @@ int main() {
     }
 
     if (num_events > 0) {
-      printf("DEBUG: epoll_wait returned %d events.\n", num_events);
+      // printf("DEBUG: epoll_wait returned %d events.\n", num_events);
     }
 
     for (i = 0; i < num_events; i++) {
@@ -518,9 +497,8 @@ int main() {
       }
     }
 
-    time_t current_time;
     while (heap_size > 0) {
-      current_time = time(NULL);
+      time_t current_time = time(NULL);
       if (timeout_heap[0].expires > current_time) {
         break;
       }
@@ -530,25 +508,23 @@ int main() {
           g_hash_table_lookup(client_states_map, GINT_TO_POINTER(expired_fd));
 
       if (client_state != NULL) {
-        printf("INFO: Client socket %d timed out. Closing connection. ⏰\n",
+        printf("INFO: Client %d timed out. Closing connection.\n",
                expired_fd);
         close_client_connection(epoll_fd, client_state);
       } else {
-        printf("WARNING: Expired FD %d not found in hash table. Likely already "
-               "closed. Removing from heap.\n",
-               expired_fd);
+        // printf("WARNING: Expired FD %d not found in hash table. Likely already closed. Removing from heap.\n", expired_fd);
         remove_min_timeout();
       }
     }
   }
 
-  printf("INFO: Server shutting down. Cleaning up resources...\n");
+  printf("INFO: Cleaning up resources. Server shutting down.\n");
   close(listen_sock);
   g_hash_table_destroy(client_states_map);
   close(epoll_fd);
   free(timeout_heap);
 
-  printf("INFO: Server shutdown complete. 👋\n");
+  // printf("INFO: Server shutdown complete.\n");
 
   return 0;
 }
