@@ -55,15 +55,13 @@ const char* get_header_value(client_state_t *client_state, const char *key) {
 // It now returns the next state instead of setting it directly.
 client_state_enum_t parse_http_request(client_state_t *client_state) {
     char *header_end = strstr(client_state->in_buffer, "\r\n\r\n");
-    if (!header_end) return STATE_READING_REQUEST; // Should not happen here, but a safety check
+    if (!header_end) return STATE_READING_REQUEST;
 
-    // Isolate the header section for parsing
     char header_section[MAX_BUFFER_SIZE];
     size_t header_len = header_end - client_state->in_buffer;
     strncpy(header_section, client_state->in_buffer, header_len);
     header_section[header_len] = '\0';
 
-    // Parse request line and headers
     char *request_line_end = strstr(header_section, "\r\n");
     if (request_line_end) {
         *request_line_end = '\0';
@@ -74,11 +72,9 @@ client_state_enum_t parse_http_request(client_state_t *client_state) {
 
     parse_all_headers(client_state, header_section);
 
-    // Check for Keep-Alive
     const char *connection_header = get_header_value(client_state, "Connection");
     client_state->keep_alive = (connection_header && strcasecmp(connection_header, "keep-alive") == 0);
 
-    // Get Content-Length for POST/PUT requests
     client_state->content_length = 0;
     const char *content_length_header = get_header_value(client_state, "Content-Length");
     if (content_length_header) {
@@ -88,13 +84,12 @@ client_state_enum_t parse_http_request(client_state_t *client_state) {
     char *body_data_start = header_end + 4;
     size_t initial_body_data_len = client_state->in_buffer_len - (body_data_start - client_state->in_buffer);
 
-    // Check if a body is expected
     if (strcasecmp(client_state->method, "POST") == 0 && client_state->content_length > 0) {
-        if (client_state->body_buffer == NULL) { // Allocate only once
+        if (client_state->body_buffer == NULL) {
             client_state->body_buffer = malloc(client_state->content_length + 1);
             if (!client_state->body_buffer) {
                 perror("malloc for body buffer failed");
-                return STATE_CLOSED; // Indicate a critical error
+                return STATE_CLOSED;
             }
         }
         
