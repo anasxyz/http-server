@@ -53,9 +53,10 @@ const char* get_header_value(client_state_t *client_state, const char *key) {
 
 // The main function to parse the entire request
 // It now returns the next state instead of setting it directly.
-client_state_enum_t parse_http_request(client_state_t *client_state) {
+// The main function to parse the entire request
+int parse_http_request(client_state_t *client_state) {
     char *header_end = strstr(client_state->in_buffer, "\r\n\r\n");
-    if (!header_end) return STATE_READING_REQUEST;
+    if (!header_end) return 0; // Malformed request
 
     char header_section[MAX_BUFFER_SIZE];
     size_t header_len = header_end - client_state->in_buffer;
@@ -70,6 +71,12 @@ client_state_enum_t parse_http_request(client_state_t *client_state) {
         *request_line_end = '\r';
     }
 
+    // Check for unsupported methods
+    if (strcasecmp(client_state->method, "GET") != 0 && strcasecmp(client_state->method, "POST") != 0) {
+        create_http_error_response(client_state, 405, "Method Not Allowed");
+        return 0;
+    }
+
     parse_all_headers(client_state, header_section);
 
     const char *connection_header = get_header_value(client_state, "Connection");
@@ -80,34 +87,28 @@ client_state_enum_t parse_http_request(client_state_t *client_state) {
     if (content_length_header) {
         client_state->content_length = atoi(content_length_header);
     }
-    
+
     char *body_data_start = header_end + 4;
     size_t initial_body_data_len = client_state->in_buffer_len - (body_data_start - client_state->in_buffer);
 
     if (strcasecmp(client_state->method, "POST") == 0 && client_state->content_length > 0) {
         if (client_state->body_buffer == NULL) {
+            if (client_state->content_length > MAX_BODY_SIZE) {
+                 create_http_error_response(client_state, 413, "Payload Too Large");
+                 return 0;
+            }
             client_state->body_buffer = malloc(client_state->content_length + 1);
             if (!client_state->body_buffer) {
                 perror("malloc for body buffer failed");
-                return STATE_CLOSED;
+                return 0;
             }
         }
         
         memcpy(client_state->body_buffer, body_data_start, initial_body_data_len);
         client_state->body_received = initial_body_data_len;
-
-        if (client_state->body_received >= client_state->content_length) {
-            client_state->body_buffer[client_state->content_length] = '\0';
-            printf("Full POST request with body received on first read.\n");
-            return STATE_WRITING_RESPONSE;
-        } else {
-            printf("Partial POST request body received, transitioning to READING_BODY state.\n");
-            return STATE_READING_BODY;
-        }
-    } else {
-        printf("Request is complete (no body or not a POST).\n");
-        return STATE_WRITING_RESPONSE;
     }
+    
+    return 1; // Success
 }
 
 // Function to prepare the HTTP response
@@ -137,4 +138,45 @@ void create_http_response(client_state_t *client_state) {
 
     client_state->out_buffer_len = strlen(client_state->out_buffer);
     client_state->out_buffer_sent = 0;
+}
+
+void create_http_error_response(client_state_t *client_state, int status_code, const char *message) {
+    char status_line[128];
+    const char *status_message;
+
+    switch (status_code) {
+        case 400:
+            status_message = "Bad Request";
+            break;
+        case 404:
+            status_message = "Not Found";
+            break;
+        case 405:
+            status_message = "Method Not Allowed";
+            break;
+        case 500:
+            status_message = "Internal Server Error";
+            break;
+        default:
+            status_code = 500;
+            status_message = "Internal Server Error";
+            break;
+    }
+
+    snprintf(status_line, sizeof(status_line), "HTTP/1.1 %d %s\r\n", status_code, status_message);
+
+    char http_headers[256];
+    snprintf(http_headers, sizeof(http_headers),
+             "Content-Type: text/plain\r\n"
+             "Content-Length: %zu\r\n"
+             "Connection: close\r\n",
+             strlen(message));
+
+    snprintf(client_state->out_buffer, sizeof(client_state->out_buffer),
+             "%s%s\r\n%s",
+             status_line, http_headers, message);
+
+    client_state->out_buffer_len = strlen(client_state->out_buffer);
+    client_state->out_buffer_sent = 0;
+    client_state->keep_alive = 0; // Error responses should generally close the connection
 }

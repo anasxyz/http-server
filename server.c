@@ -22,7 +22,11 @@ static int active_clients_count = 0;
 // Global flag to control the main server loop
 volatile int running = 1;
 
+// Global hash table to store client states
 GHashTable *client_states_map = NULL;
+
+// flag to determine if we need to set a new timeout
+int set_new_timeout = 0;
 
 // --- The NEW state transition function ---
 void transition_state(int epoll_fd, client_state_t *client,
@@ -39,30 +43,30 @@ void transition_state(int epoll_fd, client_state_t *client,
   new_event.data.ptr = client;
 
   // A flag to determine if we need to set a new timeout
-  int set_new_timeout = 0;
+  int set_new_timeout_on_read = 0;
 
   switch (new_state) {
   case STATE_READING_REQUEST:
-    // Prepare for a new read on a keep-alive connection
     client->in_buffer_len = 0;
     client->out_buffer_len = 0;
     client->out_buffer_sent = 0;
-
-    // Mark that a new timeout should be set
-    set_new_timeout = 1;
-
-    // Modify epoll interest back to EPOLLIN
+    // Set a timeout when we start waiting for a new request
+    set_new_timeout_on_read = 1;
     new_event.events = EPOLLIN | EPOLLET;
     epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event);
     break;
 
-  // The rest of the states are the same...
   case STATE_READING_BODY:
     printf("Client %d is now in the READING_BODY state.\n", client->fd);
+    // Crucial: Set a timeout for the body read as well
+    set_new_timeout_on_read = 1;
+    new_event.events = EPOLLIN | EPOLLET;
+    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event);
     break;
 
   case STATE_WRITING_RESPONSE:
-    // Modify epoll interest to EPOLLOUT to begin writing
+    // Remove the timeout when we're actively writing a response
+    remove_timeout_by_fd(client->fd);
     new_event.events = EPOLLOUT | EPOLLET;
     epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event);
     break;
@@ -77,8 +81,8 @@ void transition_state(int epoll_fd, client_state_t *client,
     break;
   }
 
-  // This is the crucial change: manage the timeout heap in one place
-  if (set_new_timeout) {
+  // Manage the timeout heap in one place
+  if (set_new_timeout_on_read) {
     // First, remove any existing timeout for this client
     remove_timeout_by_fd(client->fd);
     // Now, add the new timeout
@@ -209,73 +213,91 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
 // Function to handle reading data from a client socket
 // Returns 1 if the connection should be closed, 0 otherwise.
 int handle_read_event(client_state_t *client_state, int epoll_fd) {
-  int current_fd = client_state->fd;
+    int current_fd = client_state->fd;
 
-  while (1) {
-    ssize_t bytes_transferred;
-    size_t bytes_to_read;
-    char *read_destination;
+    while (1) {
+        ssize_t bytes_transferred;
+        size_t bytes_to_read;
+        char *read_destination;
 
-    // Determine where to read based on the current state
-    if (client_state->state == STATE_READING_REQUEST) {
-      bytes_to_read =
-          sizeof(client_state->in_buffer) - 1 - client_state->in_buffer_len;
-      read_destination = client_state->in_buffer + client_state->in_buffer_len;
-    } else if (client_state->state == STATE_READING_BODY) {
-      bytes_to_read =
-          client_state->content_length - client_state->body_received;
-      read_destination =
-          client_state->body_buffer + client_state->body_received;
-    } else {
-      break; // Not in a reading state
-    }
-
-    if (bytes_to_read == 0) {
-      break;
-    }
-
-    bytes_transferred = read(current_fd, read_destination, bytes_to_read);
-
-    if (bytes_transferred == -1) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        break;
-      } else {
-        perror("read client socket failed");
-        return 1;
-      }
-    } else if (bytes_transferred == 0) {
-      printf("Client socket %d closed connection during read.\n", current_fd);
-      return 1;
-    }
-
-    client_state->last_activity_time = time(NULL);
-
-    if (client_state->state == STATE_READING_REQUEST) {
-      client_state->in_buffer_len += bytes_transferred;
-      client_state->in_buffer[client_state->in_buffer_len] = '\0';
-
-      if (strstr(client_state->in_buffer, "\r\n\r\n")) {
-        parse_http_request(client_state);
-        if (client_state->content_length > 0) {
-          transition_state(epoll_fd, client_state, STATE_READING_BODY);
+        if (client_state->state == STATE_READING_REQUEST) {
+            bytes_to_read =
+                sizeof(client_state->in_buffer) - 1 - client_state->in_buffer_len;
+            read_destination = client_state->in_buffer + client_state->in_buffer_len;
+        } else if (client_state->state == STATE_READING_BODY) {
+            if (client_state->content_length > MAX_BODY_SIZE) {
+                create_http_error_response(client_state, 413, "Payload Too Large");
+                transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
+                return 0;
+            }
+            bytes_to_read =
+                client_state->content_length - client_state->body_received;
+            read_destination =
+                client_state->body_buffer + client_state->body_received;
         } else {
-          create_http_response(client_state);
-          transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
+            break; // Not in a reading state
         }
-      }
-    } else if (client_state->state == STATE_READING_BODY) {
-      client_state->body_received += bytes_transferred;
-      if (client_state->body_received >= client_state->content_length) {
-        client_state->body_buffer[client_state->content_length] = '\0';
-        printf("Full body received for client %d. Total size: %zu.\n",
-               current_fd, client_state->content_length);
-        printf("Final Request Body:\n%s\n", client_state->body_buffer);
-        create_http_response(client_state);
-        transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
-      }
+
+        if (bytes_to_read == 0) {
+            break;
+        }
+
+        bytes_transferred = read(current_fd, read_destination, bytes_to_read);
+
+        if (bytes_transferred == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break;
+            } else {
+                perror("read client socket failed");
+                return 1;
+            }
+        } else if (bytes_transferred == 0) {
+            printf("Client socket %d closed connection during read.\n", current_fd);
+            return 1;
+        }
+
+        client_state->last_activity_time = time(NULL);
+        remove_timeout_by_fd(current_fd);
+        time_t expires_at = time(NULL) + KEEPALIVE_IDLE_TIMEOUT_SECONDS;
+        add_timeout(current_fd, expires_at);
+
+        if (client_state->state == STATE_READING_REQUEST) {
+            client_state->in_buffer_len += bytes_transferred;
+            client_state->in_buffer[client_state->in_buffer_len] = '\0';
+            if (strstr(client_state->in_buffer, "\r\n\r\n")) {
+                int parse_success = parse_http_request(client_state);
+
+                if (!parse_success) {
+                    transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
+                } else {
+                    if (strcasecmp(client_state->method, "POST") == 0 && client_state->content_length > 0) {
+                        if (client_state->body_received >= client_state->content_length) {
+                            printf("Full POST body received on first read. Preparing response.\n");
+                            create_http_response(client_state);
+                            transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
+                        } else {
+                            printf("Partial POST body received, transitioning to READING_BODY.\n");
+                            transition_state(epoll_fd, client_state, STATE_READING_BODY);
+                        }
+                    } else {
+                        create_http_response(client_state);
+                        transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
+                    }
+                }
+            }
+        } else if (client_state->state == STATE_READING_BODY) {
+            client_state->body_received += bytes_transferred;
+            if (client_state->body_received >= client_state->content_length) {
+                client_state->body_buffer[client_state->content_length] = '\0';
+                printf("Full body received for client %d. Total size: %zu.\n",
+                       current_fd, client_state->content_length);
+                printf("Final Request Body:\n%s\n", client_state->body_buffer);
+                create_http_response(client_state);
+                transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
+            }
+        }
     }
-  }
-  return 0;
+    return 0;
 }
 
 // Function to handle writing data to a client socket
@@ -367,10 +389,9 @@ void close_client_connection(int epoll_fd, client_state_t *client_state) {
   close(current_fd);
 
   g_hash_table_remove(client_states_map, GINT_TO_POINTER(current_fd));
-
+  
+	active_clients_count--;
   printf("Client socket %d fully closed and removed.\n", current_fd);
-
-  active_clients_count--;
   printf("Active clients: %d\n", active_clients_count);
 }
 
@@ -541,6 +562,6 @@ int main() {
   close(epoll_fd);
   printf("Server shutdown complete.\n");
 
-	free(timeout_heap);
+  free(timeout_heap);
   return 0;
 }

@@ -19,6 +19,8 @@ extern GHashTable *client_states_map;
 #define MAX_HEADER_KEY_LEN 128
 #define MAX_HEADER_VALUE_LEN 1024
 
+#define MAX_BODY_SIZE 1048576 // 1MB for now idk
+
 // Shared structures
 typedef struct {
     char key[128];
