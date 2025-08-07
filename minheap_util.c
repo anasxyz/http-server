@@ -3,28 +3,35 @@
 #include "server.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 timeout_event_t *timeout_heap = NULL;
 size_t heap_size = 0;
 size_t heap_capacity = 0;
 
+// Function to initialize the min-heap
+void init_min_heap() {
+    timeout_heap = NULL;
+    heap_size = 0;
+    heap_capacity = 0;
+}
+
 void swap(timeout_event_t *a, timeout_event_t *b) {
     size_t a_index = a - timeout_heap;
     size_t b_index = b - timeout_heap;
+
+    client_state_t *client_a = g_hash_table_lookup(client_states_map, GINT_TO_POINTER(a->fd));
+    client_state_t *client_b = g_hash_table_lookup(client_states_map, GINT_TO_POINTER(b->fd));
 
     timeout_event_t temp = *a;
     *a = *b;
     *b = temp;
 
-    client_state_t *client_a = g_hash_table_lookup(client_states_map, GINT_TO_POINTER(a->fd));
-    client_state_t *client_b = g_hash_table_lookup(client_states_map, GINT_TO_POINTER(b->fd));
-
     if (client_a != NULL) {
-        client_a->timeout_heap_index = a_index;
+        client_a->timeout_heap_index = b_index;
     }
-
     if (client_b != NULL) {
-        client_b->timeout_heap_index = b_index;
+        client_b->timeout_heap_index = a_index;
     }
 }
 
@@ -73,7 +80,6 @@ void add_timeout(int fd, time_t expires) {
     
     timeout_heap[heap_size].fd = fd;
     timeout_heap[heap_size].expires = expires;
-    
     client_state->timeout_heap_index = heap_size;
     
     heap_size++;
@@ -82,9 +88,21 @@ void add_timeout(int fd, time_t expires) {
 
 void remove_min_timeout() {
     if (heap_size == 0) return;
+
+    int removed_fd = timeout_heap[0].fd;
+    client_state_t *removed_client = g_hash_table_lookup(client_states_map, GINT_TO_POINTER(removed_fd));
+    if (removed_client != NULL) {
+        removed_client->timeout_heap_index = -1;
+    }
+
     timeout_heap[0] = timeout_heap[heap_size - 1];
     heap_size--;
+
     if (heap_size > 0) {
+        client_state_t *moved_client = g_hash_table_lookup(client_states_map, GINT_TO_POINTER(timeout_heap[0].fd));
+        if (moved_client != NULL) {
+            moved_client->timeout_heap_index = 0;
+        }
         heapify_down(0);
     }
 }
@@ -108,23 +126,23 @@ void remove_timeout_by_fd(int fd) {
         return;
     }
     
-    ssize_t index = client_state->timeout_heap_index;
+    size_t index = client_state->timeout_heap_index;
     
-    if (index == heap_size - 1) {
-        heap_size--;
-    } else {
-        timeout_heap[index] = timeout_heap[heap_size - 1];
-        
+    client_state->timeout_heap_index = -1;
+    
+    timeout_heap[index] = timeout_heap[heap_size - 1];
+    heap_size--;
+
+    if (heap_size > 0 && index < heap_size) {
         client_state_t *moved_client = g_hash_table_lookup(client_states_map, GINT_TO_POINTER(timeout_heap[index].fd));
         if (moved_client != NULL) {
             moved_client->timeout_heap_index = index;
         }
 
-        heap_size--;
-        
-        heapify_down(index);
-        heapify_up(index);
+        if (index > 0 && timeout_heap[index].expires < timeout_heap[(index - 1) / 2].expires) {
+            heapify_up(index);
+        } else {
+            heapify_down(index);
+        }
     }
-    
-    client_state->timeout_heap_index = -1;
 }

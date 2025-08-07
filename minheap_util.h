@@ -14,6 +14,7 @@ extern timeout_event_t *timeout_heap;
 extern size_t heap_size;
 extern size_t heap_capacity;
 
+void init_min_heap();
 void swap(timeout_event_t *a, timeout_event_t *b);
 void heapify_up(size_t index);
 void heapify_down(size_t index);

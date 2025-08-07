@@ -71,7 +71,6 @@ int parse_http_request(client_state_t *client_state) {
         *request_line_end = '\r';
     }
 
-    // Check for unsupported methods
     if (strcasecmp(client_state->method, "GET") != 0 && strcasecmp(client_state->method, "POST") != 0) {
         create_http_error_response(client_state, 405, "Method Not Allowed");
         return 0;
@@ -108,7 +107,7 @@ int parse_http_request(client_state_t *client_state) {
         client_state->body_received = initial_body_data_len;
     }
     
-    return 1; // Success
+    return 1;
 }
 
 // Function to prepare the HTTP response

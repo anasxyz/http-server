@@ -28,7 +28,7 @@ def connect_and_send(server_address):
 
 if __name__ == "__main__":
     server_address = ('localhost', 8080)
-    num_connections = 20
+    num_connections = 30
 
     threads = []
     for _ in range(num_connections):
