@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <glib.h>
+#include <sys/epoll.h> 
 
 extern GHashTable *client_states_map;
 

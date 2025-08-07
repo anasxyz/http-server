@@ -27,7 +27,7 @@ GHashTable *client_states_map = NULL;
 // --- The NEW state transition function ---
 void transition_state(int epoll_fd, client_state_t *client, client_state_enum_t new_state) {
     if (client->state == new_state) {
-        return; // No change needed
+        return;
     }
 
     printf("Client %d transitioning from state %d to state %d.\n", client->fd, client->state, new_state);
@@ -36,6 +36,9 @@ void transition_state(int epoll_fd, client_state_t *client, client_state_enum_t 
     struct epoll_event new_event;
     new_event.data.ptr = client;
 
+    // A flag to determine if we need to set a new timeout
+    int set_new_timeout = 0;
+
     switch (new_state) {
         case STATE_READING_REQUEST:
             // Prepare for a new read on a keep-alive connection
@@ -43,17 +46,16 @@ void transition_state(int epoll_fd, client_state_t *client, client_state_enum_t 
             client->out_buffer_len = 0;
             client->out_buffer_sent = 0;
 
-            // Add to heap for timeout
-            time_t expires_at = time(NULL) + KEEPALIVE_IDLE_TIMEOUT_SECONDS;
-            add_timeout(client->fd, expires_at);
+            // Mark that a new timeout should be set
+            set_new_timeout = 1;
 
             // Modify epoll interest back to EPOLLIN
             new_event.events = EPOLLIN | EPOLLET;
             epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event);
             break;
 
+        // The rest of the states are the same...
         case STATE_READING_BODY:
-            // No epoll_ctl change needed here, we're still reading from EPOLLIN
             printf("Client %d is now in the READING_BODY state.\n", client->fd);
             break;
             
@@ -64,15 +66,21 @@ void transition_state(int epoll_fd, client_state_t *client, client_state_enum_t 
             break;
 
         case STATE_IDLE:
-            // The idle state is a special case. We transition to it after a write,
-            // but the `STATE_READING_REQUEST` transition is where the heap is managed.
             printf("Client %d is now IDLE, awaiting next request or timeout.\n", client->fd);
             break;
             
         case STATE_CLOSED:
-            // Centralized cleanup
             close_client_connection(epoll_fd, client);
             break;
+    }
+
+    // This is the crucial change: manage the timeout heap in one place
+    if (set_new_timeout) {
+        // First, remove any existing timeout for this client
+        remove_timeout_by_fd(client->fd); 
+        // Now, add the new timeout
+        time_t expires_at = time(NULL) + KEEPALIVE_IDLE_TIMEOUT_SECONDS;
+        add_timeout(client->fd, expires_at);
     }
 }
 
@@ -195,11 +203,6 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
 int handle_read_event(client_state_t *client_state, int epoll_fd) {
     int current_fd = client_state->fd;
 
-    // This check is now handled by the transition_state logic
-    if (client_state->state == STATE_IDLE) {
-        remove_timeout_by_fd(current_fd);
-    }
-    
     while (1) {
         ssize_t bytes_transferred;
         size_t bytes_to_read;
