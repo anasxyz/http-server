@@ -92,7 +92,7 @@ void handle_new_connection(int listen_sock, int epoll_fd,
   g_hash_table_insert(client_states_map, GINT_TO_POINTER(conn_sock),
                       client_state);
 
-  event.events = EPOLLIN | EPOLLET;
+  event.events = EPOLLIN;
   event.data.ptr = client_state;
   if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, conn_sock, &event) == -1) {
     fprintf(stderr, "ERROR: Failed to add new client %d to the event loop.\n",
