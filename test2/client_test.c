@@ -8,14 +8,13 @@
 
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 8080
-#define NUM_CLIENTS 100
-char *REQUEST = "POST / HTTP/1.1\r\n"
+#define NUM_CLIENTS 420
+char *REQUEST = "GET / HTTP/1.1\r\n"
                 "Host: localhost:8080\r\n"
                 "Connection: keep-alive\r\n"
                 "Content-Type: text/plain\r\n"
                 "Content-Length: 18\r\n"
-                "\r\n\r\n"
-                "This is the body!";
+                "\r\n\r\n";
 
 void run_client(int client_id) {
   int sock = 0;
