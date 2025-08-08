@@ -14,7 +14,6 @@
 #include "minheap_util.h"
 #include "parser.h"
 #include "request_handler.h"
-#include "response_handler.h"
 #include "server.h"
 #include "state_handler.h"
 
