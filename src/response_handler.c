@@ -17,14 +17,17 @@
 
 // Function to handle writing data to a client socket
 // Returns 1 if the connection should be closed, 0 otherwise.
-int handle_write_event(client_state_t *client_state, int epoll_fd, GHashTable *client_states_map) {
+int handle_write_event(client_state_t *client_state, int epoll_fd,
+                       GHashTable *client_states_map,
+                       int *active_connections_ptr) {
   int current_fd = client_state->fd;
   ssize_t bytes_transferred;
 
   if (client_state->state != STATE_WRITING_RESPONSE) {
     // printf("WARNING: Client %d received EPOLLOUT but not in WRITING_RESPONSE
     // state. Closing.\n", current_fd);
-    transition_state(epoll_fd, client_state, STATE_CLOSED, client_states_map);
+    transition_state(epoll_fd, client_state, STATE_CLOSED, client_states_map,
+                     active_connections_ptr);
     return 0;
   }
 
@@ -47,7 +50,8 @@ int handle_write_event(client_state_t *client_state, int epoll_fd, GHashTable *c
 #ifdef VERBOSE_MODE
         perror("REASON: write client socket failed");
 #endif
-        transition_state(epoll_fd, client_state, STATE_CLOSED, client_states_map);
+        transition_state(epoll_fd, client_state, STATE_CLOSED,
+                         client_states_map, active_connections_ptr);
         return 0;
       }
     } else {
@@ -56,12 +60,14 @@ int handle_write_event(client_state_t *client_state, int epoll_fd, GHashTable *c
       if (client_state->out_buffer_sent >= client_state->out_buffer_len) {
         printf("INFO: Response data sent to Client %d.\n", current_fd);
         if (client_state->keep_alive) {
-          transition_state(epoll_fd, client_state, STATE_READING_REQUEST, client_states_map);
+          transition_state(epoll_fd, client_state, STATE_READING_REQUEST,
+                           client_states_map, active_connections_ptr);
         } else {
           printf("INFO: Closing connection for Client %d (keep-alive not "
                  "requested).\n",
                  current_fd);
-          transition_state(epoll_fd, client_state, STATE_CLOSED, client_states_map);
+          transition_state(epoll_fd, client_state, STATE_CLOSED,
+                           client_states_map, active_connections_ptr);
         }
       }
       return 0;
@@ -69,9 +75,8 @@ int handle_write_event(client_state_t *client_state, int epoll_fd, GHashTable *c
   } else {
     // printf("DEBUG: EPOLLOUT on client %d but nothing to send. Closing.\n",
     // current_fd);
-    transition_state(epoll_fd, client_state, STATE_CLOSED, client_states_map);
+    transition_state(epoll_fd, client_state, STATE_CLOSED, client_states_map,
+                     active_connections_ptr);
     return 0;
   }
 }
-
-

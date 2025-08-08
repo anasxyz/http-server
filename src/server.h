@@ -1,6 +1,7 @@
 #ifndef SERVER_H
 #define SERVER_H
 
+#include <stdatomic.h>
 #include <sys/types.h>
 #include <time.h>
 #include <glib.h>
@@ -12,6 +13,7 @@ extern GHashTable *client_states_map;
 #define PORT 8080
 #define MAX_EVENTS 512
 #define NUM_WORKERS 4 // For a 4-core CPU, as an example
+#define MAX_CONNECTIONS_PER_WORKER 100
 #define MAX_BUFFER_SIZE 4096
 #define KEEPALIVE_IDLE_TIMEOUT_SECONDS 10
 
@@ -23,11 +25,11 @@ extern GHashTable *client_states_map;
 
 #define VERBOSE_MODE 1
 
-// Global counter for active client connections
-extern int active_clients_count;
-
 // Global flag to control the main server loop
 extern volatile int running;
+
+// This is the pointer to the shared, atomic total connection count.
+extern atomic_int *total_connections;
 
 // Shared structures
 typedef struct {

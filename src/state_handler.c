@@ -15,7 +15,9 @@
 
 // --- The state transition function ---
 void transition_state(int epoll_fd, client_state_t *client,
-                      client_state_enum_t new_state, GHashTable *client_states_map) {
+                      client_state_enum_t new_state,
+                      GHashTable *client_states_map,
+                      int *active_connections_ptr) {
   if (client->state == new_state) {
     return;
   }
@@ -56,7 +58,8 @@ void transition_state(int epoll_fd, client_state_t *client,
 #ifdef VERBOSE_MODE
       perror("REASON: epoll_ctl failed to modify epoll interest");
 #endif
-      close_client_connection(epoll_fd, client, client_states_map);
+      close_client_connection(epoll_fd, client, client_states_map,
+                              active_connections_ptr);
     }
     break;
 
@@ -70,7 +73,8 @@ void transition_state(int epoll_fd, client_state_t *client,
 #ifdef VERBOSE_MODE
       perror("REASON: epoll_ctl failed to modify epoll interest");
 #endif
-      close_client_connection(epoll_fd, client, client_states_map);
+      close_client_connection(epoll_fd, client, client_states_map,
+                              active_connections_ptr);
     }
     break;
 
@@ -84,16 +88,17 @@ void transition_state(int epoll_fd, client_state_t *client,
 #ifdef VERBOSE_MODE
       perror("REASON: epoll_ctl failed to modify epoll interest");
 #endif
-      close_client_connection(epoll_fd, client, client_states_map);
+      close_client_connection(epoll_fd, client, client_states_map,
+                              active_connections_ptr);
     }
     break;
 
   case STATE_CLOSED:
-    close_client_connection(epoll_fd, client, client_states_map);
+    close_client_connection(epoll_fd, client, client_states_map,
+                            active_connections_ptr);
     break;
 
   default:
     break;
   }
 }
-

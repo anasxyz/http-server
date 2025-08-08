@@ -19,7 +19,9 @@
 
 // Function to handle reading data from a client socket
 // Returns 1 if the connection should be closed, 0 otherwise.
-int handle_read_event(client_state_t *client_state, int epoll_fd, GHashTable *client_states_map) {
+int handle_read_event(client_state_t *client_state, int epoll_fd,
+                      GHashTable *client_states_map,
+                      int *active_connections_ptr) {
   int current_fd = client_state->fd;
 
   client_state->last_activity_time = time(NULL);
@@ -39,7 +41,8 @@ int handle_read_event(client_state_t *client_state, int epoll_fd, GHashTable *cl
     } else if (client_state->state == STATE_READING_BODY) {
       if (client_state->content_length > MAX_BODY_SIZE) {
         create_http_error_response(client_state, 413, "Payload Too Large");
-        transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE, client_states_map);
+        transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE,
+                         client_states_map, active_connections_ptr);
         return 0;
       }
       bytes_to_read =
@@ -95,7 +98,8 @@ int handle_read_event(client_state_t *client_state, int epoll_fd, GHashTable *cl
           fprintf(stderr, "REASON: Malformed HTTP request from client %d.\n",
                   current_fd);
 #endif
-          transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE, client_states_map);
+          transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE,
+                           client_states_map, active_connections_ptr);
         } else {
           if (strcasecmp(client_state->method, "POST") == 0 &&
               client_state->content_length > 0) {
@@ -105,15 +109,18 @@ int handle_read_event(client_state_t *client_state, int epoll_fd, GHashTable *cl
               // printf("DEBUG: Full body for Client %d: %s\n", current_fd,
               // client_state->body_buffer);
               create_http_response(client_state);
-              transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE, client_states_map);
+              transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE,
+                               client_states_map, active_connections_ptr);
             } else {
               // printf("DEBUG: Partial body received on first read,
               // transitioning to READING_BODY for Client %d.\n", current_fd);
-              transition_state(epoll_fd, client_state, STATE_READING_BODY, client_states_map);
+              transition_state(epoll_fd, client_state, STATE_READING_BODY,
+                               client_states_map, active_connections_ptr);
             }
           } else {
             create_http_response(client_state);
-            transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE, client_states_map);
+            transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE,
+                             client_states_map, active_connections_ptr);
           }
         }
       }
@@ -128,7 +135,8 @@ int handle_read_event(client_state_t *client_state, int epoll_fd, GHashTable *cl
                client_state->body_buffer);
 #endif
         create_http_response(client_state);
-        transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE, client_states_map);
+        transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE,
+                         client_states_map, active_connections_ptr);
       }
     }
   }
