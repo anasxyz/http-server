@@ -16,6 +16,8 @@
 #include "parser.h"
 #include "server.h"
 
+#define VERBOSE_MODE 1
+
 // Global counter for active client connections
 static int active_clients_count = 0;
 
@@ -40,7 +42,11 @@ void close_client_connection(int epoll_fd, client_state_t *client_state) {
 
   if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, current_fd, NULL) == -1 &&
       errno != ENOENT) {
-    perror("epoll_ctl: DEL client socket failed");
+    fprintf(stderr, "ERROR: An internal server error occurred while closing a "
+                    "client connection.\n");
+#ifdef VERBOSE_MODE
+    perror("REASON: epoll_ctl: DEL client socket failed");
+#endif
   }
 
   close(current_fd);
@@ -88,17 +94,44 @@ void transition_state(int epoll_fd, client_state_t *client,
     client->content_length = 0;
 
     new_event.events = EPOLLIN | EPOLLET;
-    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event);
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event) == -1) {
+      fprintf(stderr,
+              "ERROR: An internal server error occurred while managing client "
+              "%d.\n",
+              client->fd);
+#ifdef VERBOSE_MODE
+      perror("REASON: epoll_ctl failed to modify epoll interest");
+#endif
+      close_client_connection(epoll_fd, client);
+    }
     break;
 
   case STATE_READING_BODY:
     new_event.events = EPOLLIN | EPOLLET;
-    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event);
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event) == -1) {
+      fprintf(stderr,
+              "ERROR: An internal server error occurred while managing client "
+              "%d.\n",
+              client->fd);
+#ifdef VERBOSE_MODE
+      perror("REASON: epoll_ctl failed to modify epoll interest");
+#endif
+      close_client_connection(epoll_fd, client);
+    }
     break;
 
   case STATE_WRITING_RESPONSE:
     new_event.events = EPOLLOUT | EPOLLET;
-    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event);
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &new_event) == -1) {
+      fprintf(stderr,
+              "ERROR: An internal server error occurred while managing client "
+              "%d.\n",
+              client->fd);
+#ifdef VERBOSE_MODE
+      perror("REASON: epoll_ctl failed to modify epoll interest");
+#endif
+      close_client_connection(epoll_fd, client);
+    }
     break;
 
   case STATE_CLOSED:
@@ -114,11 +147,19 @@ void transition_state(int epoll_fd, client_state_t *client,
 int set_nonblocking(int fd) {
   int flags = fcntl(fd, F_GETFL, 0);
   if (flags == -1) {
-    perror("fcntl F_GETFL failed");
+    fprintf(stderr,
+            "ERROR: An internal server error occurred during socket setup.\n");
+#ifdef VERBOSE_MODE
+    perror("REASON: fcntl F_GETFL failed");
+#endif
     return -1;
   }
   if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
-    perror("fcntl F_SETFL O_NONBLOCK failed");
+    fprintf(stderr,
+            "ERROR: An internal server error occurred during socket setup.\n");
+#ifdef VERBOSE_MODE
+    perror("REASON: fcntl F_SETFL O_NONBLOCK failed");
+#endif
     return -1;
   }
   return 0;
@@ -132,13 +173,21 @@ int setup_listening_socket(int port) {
 
   listen_sock = socket(AF_INET, SOCK_STREAM, 0);
   if (listen_sock == -1) {
-    perror("socket creation failed");
+    fprintf(stderr, "ERROR: Failed to create a listening socket. The server "
+                    "cannot start.\n");
+#ifdef VERBOSE_MODE
+    perror("REASON: socket creation failed");
+#endif
     return -1;
   }
 
   if (setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) ==
       -1) {
-    perror("setsockopt SO_REUSEADDR failed");
+    fprintf(stderr, "ERROR: Failed to configure socket options. The server "
+                    "cannot start.\n");
+#ifdef VERBOSE_MODE
+    perror("REASON: setsockopt SO_REUSEADDR failed");
+#endif
     close(listen_sock);
     return -1;
   }
@@ -150,18 +199,31 @@ int setup_listening_socket(int port) {
 
   if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) ==
       -1) {
-    perror("bind failed");
+    fprintf(stderr,
+            "ERROR: Failed to bind the socket to port %d. The port may be in "
+            "use.\n",
+            port);
+#ifdef VERBOSE_MODE
+    perror("REASON: bind failed");
+#endif
     close(listen_sock);
     return -1;
   }
 
   if (listen(listen_sock, 10) == -1) {
-    perror("listen failed");
+    fprintf(stderr,
+            "ERROR: Failed to prepare the socket for incoming connections.\n");
+#ifdef VERBOSE_MODE
+    perror("REASON: listen failed");
+#endif
     close(listen_sock);
     return -1;
   }
 
   if (set_nonblocking(listen_sock) == -1) {
+    fprintf(stderr, "ERROR: Failed to configure the listening socket for "
+                    "non-blocking operations.\n");
+    // The reason is already printed in set_nonblocking
     close(listen_sock);
     return -1;
   }
@@ -185,19 +247,28 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         break;
       } else {
-        perror("accept failed");
-        exit(EXIT_FAILURE);
+        fprintf(stderr,
+                "ERROR: The server failed to accept a new connection.\n");
+#ifdef VERBOSE_MODE
+        perror("REASON: accept failed");
+#endif
+        break; // Break the while loop and continue the main epoll loop
       }
     }
 
     if (set_nonblocking(conn_sock) == -1) {
+      // The reason is already printed in set_nonblocking
       close(conn_sock);
       continue;
     }
 
     client_state = (client_state_t *)malloc(sizeof(client_state_t));
     if (client_state == NULL) {
-      perror("malloc client_state failed");
+      fprintf(stderr, "ERROR: The server ran out of memory while trying to "
+                      "handle a new client.\n");
+#ifdef VERBOSE_MODE
+      perror("REASON: malloc failed to allocate client state");
+#endif
       close(conn_sock);
       continue;
     }
@@ -216,7 +287,11 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
     event.events = EPOLLIN | EPOLLET;
     event.data.ptr = client_state;
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, conn_sock, &event) == -1) {
-      perror("epoll_ctl: adding conn_sock failed");
+      fprintf(stderr, "ERROR: Failed to add new client %d to the event loop.\n",
+              conn_sock);
+#ifdef VERBOSE_MODE
+      perror("REASON: epoll_ctl failed to add client socket");
+#endif
       g_hash_table_remove(client_states_map, GINT_TO_POINTER(conn_sock));
       close(conn_sock);
       continue;
@@ -268,18 +343,24 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
 
     bytes_transferred = read(current_fd, read_destination, bytes_to_read);
 
-    printf("INFO: Received request from Client %d.\n", current_fd);
+    // This INFO log is too verbose. It's better to show it only when a full
+    // request is received. printf("INFO: Received request from Client %d.\n",
+    // current_fd);
 
     if (bytes_transferred == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         break;
       } else {
-        perror("read client socket failed");
+        fprintf(stderr,
+                "ERROR: An error occurred while reading data from client %d.\n",
+                current_fd);
+#ifdef VERBOSE_MODE
+        perror("REASON: read client socket failed");
+#endif
         return 1;
       }
     } else if (bytes_transferred == 0) {
-      printf("INFO: Client socket %d closed connection during read.\n",
-             current_fd);
+      printf("INFO: Client %d closed connection.\n", current_fd);
       return 1;
     }
 
@@ -296,15 +377,22 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
         int parse_success = parse_http_request(client_state);
 
         if (!parse_success) {
+          fprintf(stderr, "ERROR: Malformed HTTP request from client %d.\n",
+                  current_fd);
+#ifdef VERBOSE_MODE
+          fprintf(stderr, "REASON: Failed to parse HTTP headers.\n");
+#endif
           transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
         } else {
           if (strcasecmp(client_state->method, "POST") == 0 &&
               client_state->content_length > 0) {
             if (client_state->body_received >= client_state->content_length) {
-              // printf("DEBUG: Full body received on first read, transitioning
-              // to WRITING_RESPONSE for Client %d.\n", current_fd);
-              printf("DEBUG: Full body for Client %d: %s\n", current_fd, client_state->body_buffer);
-
+// printf("DEBUG: Full body received on first read, transitioning
+// to WRITING_RESPONSE for Client %d.\n", current_fd);
+#ifdef VERBOSE_MODE
+              printf("DEBUG: Full body for Client %d: %s\n", current_fd,
+                     client_state->body_buffer);
+#endif
               create_http_response(client_state);
               transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
             } else {
@@ -322,8 +410,12 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
       client_state->body_received += bytes_transferred;
       if (client_state->body_received >= client_state->content_length) {
         client_state->body_buffer[client_state->content_length] = '\0';
-        // printf("DEBUG: Full body finally received, transitioning to WRITING_RESPONSE for Client %d\n", current_fd); 
-				printf("DEBUG: Full body for Client %d: %s\n", current_fd, client_state->body_buffer);
+// printf("DEBUG: Full body finally received, transitioning to WRITING_RESPONSE
+// for Client %d\n", current_fd);
+#ifdef VERBOSE_MODE
+        printf("DEBUG: Full body for Client %d: %s\n", current_fd,
+               client_state->body_buffer);
+#endif
         create_http_response(client_state);
         transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
       }
@@ -339,7 +431,8 @@ int handle_write_event(client_state_t *client_state, int epoll_fd) {
   ssize_t bytes_transferred;
 
   if (client_state->state != STATE_WRITING_RESPONSE) {
-    // printf("WARNING: Client %d received EPOLLOUT but not in WRITING_RESPONSE state. Closing.\n", current_fd);
+    // printf("WARNING: Client %d received EPOLLOUT but not in WRITING_RESPONSE
+    // state. Closing.\n", current_fd);
     transition_state(epoll_fd, client_state, STATE_CLOSED);
     return 0;
   }
@@ -356,7 +449,13 @@ int handle_write_event(client_state_t *client_state, int epoll_fd) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         return 0;
       } else {
-        perror("write client socket failed");
+        fprintf(
+            stderr,
+            "ERROR: An error occurred while sending a response to client %d.\n",
+            current_fd);
+#ifdef VERBOSE_MODE
+        perror("REASON: write client socket failed");
+#endif
         transition_state(epoll_fd, client_state, STATE_CLOSED);
         return 0;
       }
@@ -368,7 +467,8 @@ int handle_write_event(client_state_t *client_state, int epoll_fd) {
         if (client_state->keep_alive) {
           transition_state(epoll_fd, client_state, STATE_READING_REQUEST);
         } else {
-          printf("INFO: Closing connection for Client %d (keep-alive not requested).\n",
+          printf("INFO: Closing connection for Client %d (keep-alive not "
+                 "requested).\n",
                  current_fd);
           transition_state(epoll_fd, client_state, STATE_CLOSED);
         }
@@ -387,15 +487,18 @@ int handle_write_event(client_state_t *client_state, int epoll_fd) {
 void handle_client_event(int epoll_fd, struct epoll_event *event_ptr) {
   client_state_t *client_state = (client_state_t *)event_ptr->data.ptr;
   if (client_state == NULL) {
-    fprintf(stderr, "handle_client_event: client_state is NULL.\n");
+    fprintf(stderr, "ERROR: An internal server error occurred due to an "
+                    "invalid client state.\n");
+#ifdef VERBOSE_MODE
+    fprintf(stderr, "REASON: handle_client_event: client_state is NULL.\n");
+#endif
     return;
   }
   int current_fd = client_state->fd;
   uint32_t event_flags = event_ptr->events;
 
   if (event_flags & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
-    printf("INFO: Client %d disconnected or error occurred.\n",
-           current_fd);
+    printf("INFO: Client %d disconnected or an error occurred.\n", current_fd);
     transition_state(epoll_fd, client_state, STATE_CLOSED);
   } else if (event_flags & EPOLLIN) {
     if (handle_read_event(client_state, epoll_fd)) {
@@ -439,18 +542,29 @@ int main() {
   printf("INFO: Server listening on port %d.\n", PORT);
 
   if (signal(SIGINT, handle_sigint) == SIG_ERR) {
-    perror("signal registration failed");
+    fprintf(stderr, "ERROR: The server failed to set up an exit handler.\n");
+#ifdef VERBOSE_MODE
+    fprintf(stderr, "REASON: signal registration for SIGINT failed.\n");
+#endif
     exit(EXIT_FAILURE);
   }
 
   listen_sock = setup_listening_socket(PORT);
   if (listen_sock == -1) {
+    fprintf(stderr, "ERROR: The server failed to start.\n");
+#ifdef VERBOSE_MODE
+    fprintf(stderr, "REASON: Failed to setup listening socket.\n");
+#endif
     exit(EXIT_FAILURE);
   }
 
   epoll_fd = epoll_create1(0);
   if (epoll_fd == -1) {
-    perror("epoll_create1 failed");
+    fprintf(stderr,
+            "ERROR: The server failed to create a necessary event handler.\n");
+#ifdef VERBOSE_MODE
+    fprintf(stderr, "REASON: epoll_create1 failed.\n");
+#endif
     close(listen_sock);
     exit(EXIT_FAILURE);
   }
@@ -458,7 +572,10 @@ int main() {
   event.events = EPOLLIN | EPOLLET;
   event.data.fd = listen_sock;
   if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_sock, &event) == -1) {
-    perror("epoll_ctl: adding listen_sock failed");
+    fprintf(stderr, "ERROR: The server failed to register its main socket.\n");
+#ifdef VERBOSE_MODE
+    fprintf(stderr, "REASON: epoll_ctl failed for listening socket.\n");
+#endif
     close(listen_sock);
     close(epoll_fd);
     exit(EXIT_FAILURE);
@@ -468,7 +585,8 @@ int main() {
     long epoll_timeout_ms = get_next_timeout_ms();
 
     if (heap_size > 0) {
-      // printf("DEBUG: Next epoll_wait timeout: %ldms. Heap size: %zu.\n", epoll_timeout_ms, heap_size);
+      // printf("DEBUG: Next epoll_wait timeout: %ldms. Heap size: %zu.\n",
+      // epoll_timeout_ms, heap_size);
     }
 
     num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, epoll_timeout_ms);
@@ -480,7 +598,12 @@ int main() {
         }
         continue;
       }
-      perror("epoll_wait failed");
+      fprintf(
+          stderr,
+          "ERROR: A critical system call failed in the main server loop.\n");
+#ifdef VERBOSE_MODE
+      fprintf(stderr, "REASON: epoll_wait failed.\n");
+#endif
       running = 0;
       continue;
     }
@@ -508,11 +631,13 @@ int main() {
           g_hash_table_lookup(client_states_map, GINT_TO_POINTER(expired_fd));
 
       if (client_state != NULL) {
-        printf("INFO: Client %d timed out. Closing connection.\n",
-               expired_fd);
+        printf("INFO: Client %d timed out. Closing connection.\n", expired_fd);
         close_client_connection(epoll_fd, client_state);
       } else {
-        // printf("WARNING: Expired FD %d not found in hash table. Likely already closed. Removing from heap.\n", expired_fd);
+#ifdef VERBOSE_MODE
+// printf("WARNING: Expired FD %d not found in hash table. Likely already
+// closed. Removing from heap.\n", expired_fd);
+#endif
         remove_min_timeout();
       }
     }

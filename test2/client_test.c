@@ -4,13 +4,12 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <errno.h>
 #include <sys/wait.h>
 
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 8080
-#define NUM_CLIENTS 10
-char* REQUEST = "POST / HTTP/1.1\r\n"
+#define NUM_CLIENTS 1
+char* REQUEST = "POS / HTTP/1.1\r\n"
 								"Host: localhost:8080\r\n"
 								"Connection: keep-alive\r\n"
 								"Content-Type: text/plain\r\n"
@@ -21,7 +20,7 @@ char* REQUEST = "POST / HTTP/1.1\r\n"
 void run_client(int client_id) {
     int sock = 0;
     struct sockaddr_in serv_addr;
-    char buffer[1024] = {0};
+    char buffer[1024];
 
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("Socket creation error");
@@ -46,36 +45,19 @@ void run_client(int client_id) {
     printf("Client %d connected to server. Sending request...\n", client_id);
     send(sock, REQUEST, strlen(REQUEST), 0);
 
-    // Read the server's response
-    ssize_t valread = read(sock, buffer, 1024);
-    if (valread > 0) {
-        printf("Client %d received response. Now waiting for timeout...\n", client_id);
+    printf("Client %d waiting for server response...\n", client_id);
+
+    // Read and print the server's response
+    ssize_t valread;
+    while ((valread = read(sock, buffer, sizeof(buffer) - 1)) > 0) {
+        buffer[valread] = '\0';  // Null-terminate
+        printf("Client %d received:\n%s", client_id, buffer);
     }
 
-    // Loop until the server closes the connection due to timeout
-    while (1) {
-        // We'll try to read again. A return value of 0 means the server closed the connection.
-        fd_set fds;
-        struct timeval tv;
-        FD_ZERO(&fds);
-        FD_SET(sock, &fds);
-        tv.tv_sec = 1; // Check every second
-        tv.tv_usec = 0;
-
-        int ret = select(sock + 1, &fds, NULL, NULL, &tv);
-        if (ret > 0) {
-            valread = read(sock, buffer, 1024);
-            if (valread == 0) {
-                printf("Client %d detected server closed connection. Exiting.\n", client_id);
-                break;
-            } else if (valread < 0) {
-                if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    perror("Read error");
-                    break;
-                }
-            }
-        }
-        // If select times out, we just loop again and keep waiting.
+    if (valread == 0) {
+        printf("\nClient %d: server closed the connection.\n", client_id);
+    } else if (valread < 0) {
+        perror("Read error");
     }
 
     close(sock);
