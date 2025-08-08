@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <glib.h>
 #include <netinet/in.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,16 +30,22 @@ void handle_new_connection(int listen_sock, int epoll_fd,
   struct epoll_event event;
   client_state_t *client_state;
 
+  static bool is_max_connections_logged = false;
+
   // Check if the worker has reached its connection limit before accepting.
   // The check is now done once per call.
   if (*active_connections_ptr >= MAX_CONNECTIONS_PER_WORKER) {
-    if (VERBOSE_MODE) {
+    if (VERBOSE_MODE && !is_max_connections_logged) {
       printf("WARNING: Worker %d has reached max connections (%d). Not "
              "accepting new ones.\n",
              getpid(), *active_connections_ptr);
+      is_max_connections_logged = true; // Set the flag to true
     }
     return; // Return immediately, don't try to accept.
   }
+
+  // if not at max capacity, reset the flag
+  is_max_connections_logged = false;
 
   client_len = sizeof(client_addr);
   conn_sock = accept(listen_sock, (struct sockaddr *)&client_addr, &client_len);
@@ -116,30 +123,38 @@ void close_client_connection(int epoll_fd, client_state_t *client_state,
 
   int current_fd = client_state->fd;
 
+  // A crucial safeguard: check if the client state still exists in the hash
+  // table. If it doesn't, this function has already been called for this
+  // client.
+  if (!g_hash_table_contains(client_states_map, GINT_TO_POINTER(current_fd))) {
+    return; // The client was already closed, so do nothing.
+  }
+
+  // Unconditionally remove the timeout from the heap.
   if (client_state->timeout_heap_index != -1) {
     remove_timeout_by_fd(current_fd, client_states_map);
   }
 
+  // Remove the socket from the epoll instance.
   if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, current_fd, NULL) == -1 &&
       errno != ENOENT) {
-    fprintf(stderr, "ERROR: An internal server error occurred while closing a "
-                    "client connection.\n");
-#ifdef VERBOSE_MODE
     perror("REASON: epoll_ctl: DEL client socket failed");
-#endif
   }
 
+  // Close the file descriptor.
   close(current_fd);
 
+  // Remove the client from the hash table. This will free the memory.
   g_hash_table_remove(client_states_map, GINT_TO_POINTER(current_fd));
 
   // Decrement the per-worker connection count.
   (*active_connections_ptr)--;
-  // ...and the shared atomic counter for the server total.
+
+  // Decrement the shared atomic counter for the server total.
   atomic_fetch_sub(total_connections, 1);
 
-  // printf("INFO: Client socket %d fully closed. Active connections: %d.\n",
-  // current_fd, atomic_load(total_connections));
+  printf("INFO: Client socket %d fully closed. Active connections: %d.\n",
+         current_fd, atomic_load(total_connections));
 }
 
 // Function to handle events on an existing client socket.

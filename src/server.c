@@ -129,7 +129,7 @@ void run_worker_loop(int listen_sock) {
   }
 
   // A worker adds the shared listening socket to its own epoll instance.
-  event.events = EPOLLIN | EPOLLET;
+  event.events = EPOLLIN;
   event.data.fd = listen_sock;
   if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_sock, &event) == -1) {
     fprintf(stderr, "ERROR: Worker failed to register listening socket.\n");
@@ -139,7 +139,23 @@ void run_worker_loop(int listen_sock) {
 
   // The worker's main event loop.
   while (running) {
-    long epoll_timeout_ms = get_next_timeout_ms();
+    // --- START OF CORRECTED LOGIC ---
+    int epoll_timeout_ms = -1; // Default to an infinite timeout
+    
+    // Check if the heap has any timeouts
+    if (heap_size > 0) {
+        time_t now = time(NULL);
+        time_t next_timeout_time = timeout_heap[0].expires;
+
+        if (next_timeout_time > now) {
+            epoll_timeout_ms = (int)((next_timeout_time - now) * 1000);
+        } else {
+            // Timeout has already expired, process it immediately.
+            epoll_timeout_ms = 0;
+        }
+    }
+    // --- END OF CORRECTED LOGIC ---
+
     num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, epoll_timeout_ms);
 
     if (num_events == -1) {
