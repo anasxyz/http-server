@@ -5,11 +5,13 @@
 #include <stdlib.h>
 #include <time.h>
 
+#include "minheap_util.h"
+#include "server.h"
+
 timeout_event_t *timeout_heap = NULL;
 size_t heap_size = 0;
 size_t heap_capacity = 0;
 
-// Function to initialize the min-heap
 void init_min_heap() {
     timeout_heap = NULL;
     heap_size = 0;

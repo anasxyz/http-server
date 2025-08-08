@@ -9,7 +9,7 @@
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 8080
 #define NUM_CLIENTS 1
-char* REQUEST = "POS / HTTP/1.1\r\n"
+char* REQUEST = "POST / HTTP/1.1\r\n"
 								"Host: localhost:8080\r\n"
 								"Connection: keep-alive\r\n"
 								"Content-Type: text/plain\r\n"

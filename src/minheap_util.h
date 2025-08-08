@@ -9,7 +9,6 @@ typedef struct {
     int fd;
 } timeout_event_t;
 
-// A simple dynamic array for our min-heap
 extern timeout_event_t *timeout_heap;
 extern size_t heap_size;
 extern size_t heap_capacity;

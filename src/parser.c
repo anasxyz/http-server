@@ -1,12 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h> // For strcasecmp
+#include <strings.h> 
 
 #include "parser.h"
 #include "server.h"
 
-// A helper function to parse all headers into a structured array
 static void parse_all_headers(client_state_t *client_state, char *buffer) {
   char *header_start = strstr(buffer, "\r\n") + 2;
   char *header_line;
@@ -123,7 +122,7 @@ int parse_http_request(client_state_t *client_state) {
 
 // Function to prepare the HTTP response
 void create_http_response(client_state_t *client_state) {
-  const char *http_response_body = "<!DOCTYPE html>\n"
+  const char *http_response_body = "<!DOCTYPE html>"
 		                               "<html><body><h1>Hello World!</h1></body></html>";
   char http_headers[256];
 

@@ -21,6 +21,14 @@ extern GHashTable *client_states_map;
 
 #define MAX_BODY_SIZE 1048576 // 1MB for now idk
 
+#define VERBOSE_MODE 1
+
+// Global counter for active client connections
+extern int active_clients_count;
+
+// Global flag to control the main server loop
+extern volatile int running;
+
 // Shared structures
 typedef struct {
     char key[128];
@@ -64,16 +72,8 @@ typedef struct {
 } client_state_t;
 
 
-// --- Function prototypes ---
-// These are external so other files know about them
-int set_nonblocking(int fd);
 int setup_listening_socket(int port);
-void handle_new_connection(int listen_sock, int epoll_fd);
-void handle_client_event(int epoll_fd, struct epoll_event *event_ptr);
-void close_client_connection(int epoll_fd, client_state_t *client_state);
+void cleanup_client_state_on_destroy(gpointer data);
 void handle_sigint();
-
-// New state transition function
-void transition_state(int epoll_fd, client_state_t *client, client_state_enum_t new_state);
 
 #endif // SERVER_H
