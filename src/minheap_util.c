@@ -18,7 +18,7 @@ void init_min_heap() {
     heap_capacity = 0;
 }
 
-void swap(timeout_event_t *a, timeout_event_t *b) {
+void swap(timeout_event_t *a, timeout_event_t *b, GHashTable *client_states_map) {
     size_t a_index = a - timeout_heap;
     size_t b_index = b - timeout_heap;
 
@@ -37,16 +37,16 @@ void swap(timeout_event_t *a, timeout_event_t *b) {
     }
 }
 
-void heapify_up(size_t index) {
+void heapify_up(size_t index, GHashTable *client_states_map) {
     if (index == 0) return;
     size_t parent_index = (index - 1) / 2;
     if (timeout_heap[index].expires < timeout_heap[parent_index].expires) {
-        swap(&timeout_heap[index], &timeout_heap[parent_index]);
-        heapify_up(parent_index);
+        swap(&timeout_heap[index], &timeout_heap[parent_index], client_states_map);
+        heapify_up(parent_index, client_states_map);
     }
 }
 
-void heapify_down(size_t index) {
+void heapify_down(size_t index, GHashTable *client_states_map) {
     size_t smallest = index;
     size_t left = 2 * index + 1;
     size_t right = 2 * index + 2;
@@ -59,12 +59,12 @@ void heapify_down(size_t index) {
     }
 
     if (smallest != index) {
-        swap(&timeout_heap[index], &timeout_heap[smallest]);
-        heapify_down(smallest);
+        swap(&timeout_heap[index], &timeout_heap[smallest], client_states_map);
+        heapify_down(smallest, client_states_map);
     }
 }
 
-void add_timeout(int fd, time_t expires) {
+void add_timeout(int fd, time_t expires, GHashTable *client_states_map) {
     if (heap_size >= heap_capacity) {
         heap_capacity = (heap_capacity == 0) ? 10 : heap_capacity * 2;
         timeout_event_t *new_heap = realloc(timeout_heap, heap_capacity * sizeof(timeout_event_t));
@@ -85,10 +85,10 @@ void add_timeout(int fd, time_t expires) {
     client_state->timeout_heap_index = heap_size;
     
     heap_size++;
-    heapify_up(heap_size - 1);
+    heapify_up(heap_size - 1, client_states_map);
 }
 
-void remove_min_timeout() {
+void remove_min_timeout(GHashTable *client_states_map) {
     if (heap_size == 0) return;
 
     int removed_fd = timeout_heap[0].fd;
@@ -105,7 +105,7 @@ void remove_min_timeout() {
         if (moved_client != NULL) {
             moved_client->timeout_heap_index = 0;
         }
-        heapify_down(0);
+        heapify_down(0, client_states_map);
     }
 }
 
@@ -121,7 +121,7 @@ long get_next_timeout_ms() {
     return remaining_seconds * 1000;
 }
 
-void remove_timeout_by_fd(int fd) {
+void remove_timeout_by_fd(int fd, GHashTable *client_states_map) {
     client_state_t *client_state = g_hash_table_lookup(client_states_map, GINT_TO_POINTER(fd));
     
     if (client_state == NULL || client_state->timeout_heap_index == -1) {
@@ -142,19 +142,19 @@ void remove_timeout_by_fd(int fd) {
         }
 
         if (index > 0 && timeout_heap[index].expires < timeout_heap[(index - 1) / 2].expires) {
-            heapify_up(index);
+            heapify_up(index, client_states_map);
         } else {
-            heapify_down(index);
+            heapify_down(index, client_states_map);
         }
     }
 }
 
-void update_timeout(int fd, time_t expires) {
+void update_timeout(int fd, time_t expires, GHashTable *client_states_map) {
   client_state_t *client_state =
       g_hash_table_lookup(client_states_map, GINT_TO_POINTER(fd));
   if (client_state == NULL || client_state->timeout_heap_index == -1) {
     // If not in heap, add it
-    add_timeout(fd, expires);
+    add_timeout(fd, expires, client_states_map);
     return;
   }
 
@@ -164,9 +164,9 @@ void update_timeout(int fd, time_t expires) {
   // Check if we need to heapify up or down
   if (index > 0 &&
       timeout_heap[index].expires < timeout_heap[(index - 1) / 2].expires) {
-    heapify_up(index);
+    heapify_up(index, client_states_map);
   } else {
-    heapify_down(index);
+    heapify_down(index, client_states_map);
   }
 }
 

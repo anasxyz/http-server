@@ -22,7 +22,7 @@
 int active_clients_count = 0;
 
 // Function to handle a new incoming connection on the listening socket.
-void handle_new_connection(int listen_sock, int epoll_fd) {
+void handle_new_connection(int listen_sock, int epoll_fd, GHashTable *client_states_map) {
   int conn_sock;
   struct sockaddr_in client_addr;
   socklen_t client_len;
@@ -69,7 +69,7 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
     client_state->timeout_heap_index = -1;
 
     time_t expires_at = time(NULL) + KEEPALIVE_IDLE_TIMEOUT_SECONDS;
-    add_timeout(conn_sock, expires_at);
+    add_timeout(conn_sock, expires_at, client_states_map);
 
     g_hash_table_insert(client_states_map, GINT_TO_POINTER(conn_sock),
                         client_state);
@@ -95,7 +95,7 @@ void handle_new_connection(int listen_sock, int epoll_fd) {
 }
 
 // Function to handle closing a client connection
-void close_client_connection(int epoll_fd, client_state_t *client_state) {
+void close_client_connection(int epoll_fd, client_state_t *client_state, GHashTable *client_states_map) {
   if (client_state == NULL) {
     return;
   }
@@ -104,7 +104,7 @@ void close_client_connection(int epoll_fd, client_state_t *client_state) {
   // printf("INFO: Initiating closure for client socket %d.\n", current_fd);
 
   if (client_state->timeout_heap_index != -1) {
-    remove_timeout_by_fd(current_fd);
+    remove_timeout_by_fd(current_fd, client_states_map);
   }
 
   if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, current_fd, NULL) == -1 &&
@@ -127,7 +127,7 @@ void close_client_connection(int epoll_fd, client_state_t *client_state) {
 }
 
 // Function to handle events on an existing client socket.
-void handle_client_event(int epoll_fd, struct epoll_event *event_ptr) {
+void handle_client_event(int epoll_fd, struct epoll_event *event_ptr, GHashTable *client_states_map) {
   client_state_t *client_state = (client_state_t *)event_ptr->data.ptr;
   if (client_state == NULL) {
     fprintf(stderr, "ERROR: An internal server error occurred due to an "
@@ -142,13 +142,13 @@ void handle_client_event(int epoll_fd, struct epoll_event *event_ptr) {
 
   if (event_flags & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
     printf("INFO: Client %d disconnected or an error occurred.\n", current_fd);
-    transition_state(epoll_fd, client_state, STATE_CLOSED);
+    transition_state(epoll_fd, client_state, STATE_CLOSED, client_states_map);
   } else if (event_flags & EPOLLIN) {
-    if (handle_read_event(client_state, epoll_fd)) {
-      transition_state(epoll_fd, client_state, STATE_CLOSED);
+    if (handle_read_event(client_state, epoll_fd, client_states_map)) {
+      transition_state(epoll_fd, client_state, STATE_CLOSED, client_states_map);
     }
   } else if (event_flags & EPOLLOUT) {
-    handle_write_event(client_state, epoll_fd);
+    handle_write_event(client_state, epoll_fd, client_states_map);
   }
 }
 

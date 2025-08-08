@@ -9,6 +9,7 @@
 #include <sys/epoll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -18,9 +19,6 @@
 #include "utils.h"
 
 volatile int running = 1;
-
-// Global hash table to store client states
-GHashTable *client_states_map = NULL;
 
 // Function to set up the listening socket
 int setup_listening_socket(int port) {
@@ -108,132 +106,125 @@ void handle_sigint() {
   running = 0;
 }
 
+// All your previous `main` function logic, including the `epoll` setup
+// and the `while(running)` loop, now lives in this function.
+void run_worker_loop(int listen_sock) {
+    // Each worker has its own private set of state variables.
+    GHashTable *client_states_map = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, cleanup_client_state_on_destroy);
+    init_min_heap(); // Each worker also gets its own timeout heap.
 
-int main() {
-  int listen_sock;
-  int epoll_fd;
-  struct epoll_event event;
-  struct epoll_event events[MAX_EVENTS];
-  int num_events;
-  int i;
-
-  client_states_map = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL,
-                                            cleanup_client_state_on_destroy);
-  init_min_heap();
-
-  printf("INFO: Server listening on port %d.\n", PORT);
-
-  if (signal(SIGINT, handle_sigint) == SIG_ERR) {
-    fprintf(stderr, "ERROR: The server failed to set up an exit handler.\n");
-#ifdef VERBOSE_MODE
-    fprintf(stderr, "REASON: signal registration for SIGINT failed.\n");
-#endif
-    exit(EXIT_FAILURE);
-  }
-
-  listen_sock = setup_listening_socket(PORT);
-  if (listen_sock == -1) {
-    fprintf(stderr, "ERROR: The server failed to start.\n");
-#ifdef VERBOSE_MODE
-    fprintf(stderr, "REASON: Failed to setup listening socket.\n");
-#endif
-    exit(EXIT_FAILURE);
-  }
-
-  epoll_fd = epoll_create1(0);
-  if (epoll_fd == -1) {
-    fprintf(stderr,
-            "ERROR: The server failed to create a necessary event handler.\n");
-#ifdef VERBOSE_MODE
-    fprintf(stderr, "REASON: epoll_create1 failed.\n");
-#endif
-    close(listen_sock);
-    exit(EXIT_FAILURE);
-  }
-
-  event.events = EPOLLIN | EPOLLET;
-  event.data.fd = listen_sock;
-  if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_sock, &event) == -1) {
-    fprintf(stderr, "ERROR: The server failed to register its main socket.\n");
-#ifdef VERBOSE_MODE
-    fprintf(stderr, "REASON: epoll_ctl failed for listening socket.\n");
-#endif
-    close(listen_sock);
-    close(epoll_fd);
-    exit(EXIT_FAILURE);
-  }
-
-  while (running) {
-    long epoll_timeout_ms = get_next_timeout_ms();
-
-    if (heap_size > 0) {
-      // printf("DEBUG: Next epoll_wait timeout: %ldms. Heap size: %zu.\n",
-      // epoll_timeout_ms, heap_size);
+    int epoll_fd;
+    struct epoll_event event;
+    struct epoll_event events[MAX_EVENTS];
+    int num_events;
+    int i;
+    
+    epoll_fd = epoll_create1(0);
+    if (epoll_fd == -1) {
+        fprintf(stderr, "ERROR: Worker failed to create epoll instance.\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    // A worker adds the shared listening socket to its own epoll instance.
+    event.events = EPOLLIN | EPOLLET;
+    event.data.fd = listen_sock;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_sock, &event) == -1) {
+        fprintf(stderr, "ERROR: Worker failed to register listening socket.\n");
+        close(epoll_fd);
+        exit(EXIT_FAILURE);
     }
 
-    num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, epoll_timeout_ms);
+    // The worker's main event loop.
+    while (running) {
+        long epoll_timeout_ms = get_next_timeout_ms();
+        num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, epoll_timeout_ms);
 
-    if (num_events == -1) {
-      if (errno == EINTR) {
-        if (!running) {
-          break;
+        if (num_events == -1) {
+            if (errno == EINTR) {
+                if (!running) break;
+                continue;
+            }
+            fprintf(stderr, "ERROR: Worker's epoll_wait failed.\n");
+            break;
         }
-        continue;
-      }
-      fprintf(
-          stderr,
-          "ERROR: A critical system call failed in the main server loop.\n");
-#ifdef VERBOSE_MODE
-      fprintf(stderr, "REASON: epoll_wait failed.\n");
-#endif
-      running = 0;
-      continue;
+        
+        for (i = 0; i < num_events; i++) {
+            if (events[i].data.fd == listen_sock) {
+                handle_new_connection(listen_sock, epoll_fd, client_states_map);
+            } else {
+                handle_client_event(epoll_fd, &events[i], client_states_map);
+            }
+        }
+        
+        while (heap_size > 0) {
+            time_t current_time = time(NULL);
+            if (timeout_heap[0].expires > current_time) {
+                break;
+            }
+            
+            int expired_fd = timeout_heap[0].fd;
+            client_state_t *client_state = g_hash_table_lookup(client_states_map, GINT_TO_POINTER(expired_fd));
+            if (client_state != NULL) {
+                printf("INFO: Client %d timed out. Closing connection.\n", expired_fd);
+                close_client_connection(epoll_fd, client_state, client_states_map);
+            } else {
+                remove_min_timeout(client_states_map);
+            }
+        }
     }
-
-    if (num_events > 0) {
-      // printf("DEBUG: epoll_wait returned %d events.\n", num_events);
-    }
-
-    for (i = 0; i < num_events; i++) {
-      if (events[i].data.fd == listen_sock) {
-        handle_new_connection(listen_sock, epoll_fd);
-      } else {
-        handle_client_event(epoll_fd, &events[i]);
-      }
-    }
-
-    while (heap_size > 0) {
-      time_t current_time = time(NULL);
-      if (timeout_heap[0].expires > current_time) {
-        break;
-      }
-
-      int expired_fd = timeout_heap[0].fd;
-      client_state_t *client_state =
-          g_hash_table_lookup(client_states_map, GINT_TO_POINTER(expired_fd));
-
-      if (client_state != NULL) {
-        printf("INFO: Client %d timed out. Closing connection.\n", expired_fd);
-        close_client_connection(epoll_fd, client_state);
-      } else {
-#ifdef VERBOSE_MODE
-// printf("WARNING: Expired FD %d not found in hash table. Likely already
-// closed. Removing from heap.\n", expired_fd);
-#endif
-        remove_min_timeout();
-      }
-    }
-  }
-
-  printf("INFO: Cleaning up resources. Server shutting down.\n");
-  close(listen_sock);
-  g_hash_table_destroy(client_states_map);
-  close(epoll_fd);
-  free(timeout_heap);
-
-  // printf("INFO: Server shutdown complete.\n");
-
-  return 0;
+    
+    // Worker cleans up its own resources before exiting.
+    printf("INFO: Worker %d shutting down.\n", getpid());
+    g_hash_table_destroy(client_states_map);
+    close(epoll_fd);
+    free(timeout_heap);
 }
 
+
+int main() {
+    int listen_sock;
+    pid_t pid;
+    int i;
+    int status;
+
+    // 1. The Master Process creates the single listening socket.
+    printf("INFO: Master process starting, listening on port %d.\n", PORT);
+    listen_sock = setup_listening_socket(PORT);
+    if (listen_sock == -1) {
+        fprintf(stderr, "ERROR: Master failed to setup listening socket.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Set up a signal handler for graceful shutdown in the master process.
+    if (signal(SIGINT, handle_sigint) == SIG_ERR) {
+        fprintf(stderr, "ERROR: Master failed to set up an exit handler.\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    // 2. The Master Process forks off multiple worker processes.
+    for (i = 0; i < NUM_WORKERS; i++) {
+        pid = fork();
+        if (pid == -1) {
+            perror("ERROR: Master failed to fork worker process");
+            // In a real application, you might handle this more gracefully.
+            continue; 
+        } else if (pid == 0) { // This is the child process (the worker).
+            printf("INFO: Worker process %d (PID: %d) started.\n", i, getpid());
+            run_worker_loop(listen_sock);
+            exit(EXIT_SUCCESS); // Worker exits after its loop terminates.
+        }
+    }
+
+    // 3. The Master Process waits for all worker processes to terminate.
+    // It will block here until all child processes have exited.
+    while (wait(&status) > 0) {
+        // You can check the status of the child process here if needed.
+    }
+    
+    // 4. Master cleans up the listening socket and its own resources.
+    printf("INFO: All worker processes have terminated. Master shutting down.\n");
+    close(listen_sock);
+
+    return 0;
+}
 

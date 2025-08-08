@@ -10,10 +10,10 @@ extern GHashTable *client_states_map;
 
 // Shared constants
 #define PORT 8080
-#define MAX_EVENTS 10
+#define MAX_EVENTS 512
+#define NUM_WORKERS 4 // For a 4-core CPU, as an example
 #define MAX_BUFFER_SIZE 4096
-#define MAX_ACTIVE_CLIENTS 100
-#define KEEPALIVE_IDLE_TIMEOUT_SECONDS 5
+#define KEEPALIVE_IDLE_TIMEOUT_SECONDS 10
 
 #define MAX_HEADERS 32
 #define MAX_HEADER_KEY_LEN 128

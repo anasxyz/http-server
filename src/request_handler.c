@@ -19,12 +19,12 @@
 
 // Function to handle reading data from a client socket
 // Returns 1 if the connection should be closed, 0 otherwise.
-int handle_read_event(client_state_t *client_state, int epoll_fd) {
+int handle_read_event(client_state_t *client_state, int epoll_fd, GHashTable *client_states_map) {
   int current_fd = client_state->fd;
 
   client_state->last_activity_time = time(NULL);
   time_t expires_at = time(NULL) + KEEPALIVE_IDLE_TIMEOUT_SECONDS;
-  update_timeout(current_fd, expires_at);
+  update_timeout(current_fd, expires_at, client_states_map);
 
   // Read loop
   while (1) {
@@ -39,7 +39,7 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
     } else if (client_state->state == STATE_READING_BODY) {
       if (client_state->content_length > MAX_BODY_SIZE) {
         create_http_error_response(client_state, 413, "Payload Too Large");
-        transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
+        transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE, client_states_map);
         return 0;
       }
       bytes_to_read =
@@ -92,29 +92,28 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
         if (!parse_success) {
           fprintf(stderr, "ERROR: Failed to parse HTTP headers.\n");
 #ifdef VERBOSE_MODE
-          fprintf(stderr, "REASON: Malformed HTTP request from client %d.\n", current_fd);
+          fprintf(stderr, "REASON: Malformed HTTP request from client %d.\n",
+                  current_fd);
 #endif
-          transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
+          transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE, client_states_map);
         } else {
           if (strcasecmp(client_state->method, "POST") == 0 &&
               client_state->content_length > 0) {
             if (client_state->body_received >= client_state->content_length) {
-// printf("DEBUG: Full body received on first read, transitioning
-// to WRITING_RESPONSE for Client %d.\n", current_fd);
-#ifdef VERBOSE_MODE
-              printf("DEBUG: Full body for Client %d: %s\n", current_fd,
-                     client_state->body_buffer);
-#endif
+              // printf("DEBUG: Full body received on first read, transitioning
+              // to WRITING_RESPONSE for Client %d.\n", current_fd);
+              // printf("DEBUG: Full body for Client %d: %s\n", current_fd,
+              // client_state->body_buffer);
               create_http_response(client_state);
-              transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
+              transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE, client_states_map);
             } else {
               // printf("DEBUG: Partial body received on first read,
               // transitioning to READING_BODY for Client %d.\n", current_fd);
-              transition_state(epoll_fd, client_state, STATE_READING_BODY);
+              transition_state(epoll_fd, client_state, STATE_READING_BODY, client_states_map);
             }
           } else {
             create_http_response(client_state);
-            transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
+            transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE, client_states_map);
           }
         }
       }
@@ -129,10 +128,9 @@ int handle_read_event(client_state_t *client_state, int epoll_fd) {
                client_state->body_buffer);
 #endif
         create_http_response(client_state);
-        transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE);
+        transition_state(epoll_fd, client_state, STATE_WRITING_RESPONSE, client_states_map);
       }
     }
   }
   return 0;
 }
-

@@ -15,7 +15,7 @@
 
 // --- The state transition function ---
 void transition_state(int epoll_fd, client_state_t *client,
-                      client_state_enum_t new_state) {
+                      client_state_enum_t new_state, GHashTable *client_states_map) {
   if (client->state == new_state) {
     return;
   }
@@ -26,11 +26,11 @@ void transition_state(int epoll_fd, client_state_t *client,
   // Update the client's timeout on every state change to a reading state
   if (new_state == STATE_READING_REQUEST || new_state == STATE_READING_BODY) {
     time_t expires_at = time(NULL) + KEEPALIVE_IDLE_TIMEOUT_SECONDS;
-    update_timeout(client->fd, expires_at);
+    update_timeout(client->fd, expires_at, client_states_map);
   } else {
     // For other states, remove the timeout as it's not idle
     if (client->timeout_heap_index != -1) {
-      remove_timeout_by_fd(client->fd);
+      remove_timeout_by_fd(client->fd, client_states_map);
     }
   }
 
@@ -56,7 +56,7 @@ void transition_state(int epoll_fd, client_state_t *client,
 #ifdef VERBOSE_MODE
       perror("REASON: epoll_ctl failed to modify epoll interest");
 #endif
-      close_client_connection(epoll_fd, client);
+      close_client_connection(epoll_fd, client, client_states_map);
     }
     break;
 
@@ -70,7 +70,7 @@ void transition_state(int epoll_fd, client_state_t *client,
 #ifdef VERBOSE_MODE
       perror("REASON: epoll_ctl failed to modify epoll interest");
 #endif
-      close_client_connection(epoll_fd, client);
+      close_client_connection(epoll_fd, client, client_states_map);
     }
     break;
 
@@ -84,12 +84,12 @@ void transition_state(int epoll_fd, client_state_t *client,
 #ifdef VERBOSE_MODE
       perror("REASON: epoll_ctl failed to modify epoll interest");
 #endif
-      close_client_connection(epoll_fd, client);
+      close_client_connection(epoll_fd, client, client_states_map);
     }
     break;
 
   case STATE_CLOSED:
-    close_client_connection(epoll_fd, client);
+    close_client_connection(epoll_fd, client, client_states_map);
     break;
 
   default:
