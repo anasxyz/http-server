@@ -7,16 +7,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/mman.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
-#include <sys/mman.h>
 
 #include "connection_handler.h"
 #include "minheap_util.h"
 #include "server.h"
+#include "ssl.h"
 #include "utils.h"
 
 volatile int running = 1;
@@ -116,6 +117,14 @@ void run_worker_loop(int listen_sock) {
 
   int active_connections = 0;
 
+  // --- SSL Setup for Worker ---
+  SSL_CTX *ssl_ctx = create_ssl_context();
+  if (!ssl_ctx) {
+    exit(EXIT_FAILURE);
+  }
+  configure_context(ssl_ctx, "cert.pem", "key.pem");
+  // --- End SSL Setup ---
+
   int epoll_fd;
   struct epoll_event event;
   struct epoll_event events[MAX_EVENTS];
@@ -141,18 +150,18 @@ void run_worker_loop(int listen_sock) {
   while (running) {
     // --- START OF CORRECTED LOGIC ---
     int epoll_timeout_ms = -1; // Default to an infinite timeout
-    
+
     // Check if the heap has any timeouts
     if (heap_size > 0) {
-        time_t now = time(NULL);
-        time_t next_timeout_time = timeout_heap[0].expires;
+      time_t now = time(NULL);
+      time_t next_timeout_time = timeout_heap[0].expires;
 
-        if (next_timeout_time > now) {
-            epoll_timeout_ms = (int)((next_timeout_time - now) * 1000);
-        } else {
-            // Timeout has already expired, process it immediately.
-            epoll_timeout_ms = 0;
-        }
+      if (next_timeout_time > now) {
+        epoll_timeout_ms = (int)((next_timeout_time - now) * 1000);
+      } else {
+        // Timeout has already expired, process it immediately.
+        epoll_timeout_ms = 0;
+      }
     }
     // --- END OF CORRECTED LOGIC ---
 
@@ -171,7 +180,7 @@ void run_worker_loop(int listen_sock) {
     for (i = 0; i < num_events; i++) {
       if (events[i].data.fd == listen_sock) {
         handle_new_connection(listen_sock, epoll_fd, client_states_map,
-                              &active_connections);
+                              &active_connections, ssl_ctx);
       } else {
         handle_client_event(epoll_fd, &events[i], client_states_map,
                             &active_connections);
@@ -188,7 +197,9 @@ void run_worker_loop(int listen_sock) {
       client_state_t *client_state =
           g_hash_table_lookup(client_states_map, GINT_TO_POINTER(expired_fd));
       if (client_state != NULL) {
-        printf("INFO: Client %d timed out. Closing connection. Active connections: %d\n", expired_fd, atomic_load(total_connections));
+        printf("INFO: Client %d timed out. Closing connection. Active "
+               "connections: %d\n",
+               expired_fd, atomic_load(total_connections));
         close_client_connection(epoll_fd, client_state, client_states_map,
                                 &active_connections);
       } else {
@@ -202,6 +213,10 @@ void run_worker_loop(int listen_sock) {
   g_hash_table_destroy(client_states_map);
   close(epoll_fd);
   free(timeout_heap);
+
+  // --- SSL Cleanup for Worker ---
+  SSL_CTX_free(ssl_ctx);
+  // --- End SSL Cleanup ---
 }
 
 int main() {
@@ -240,6 +255,10 @@ int main() {
   }
 
   atomic_store(total_connections, 0);
+
+  // --- SSL Initialization for Master ---
+  init_openssl();
+  // --- End SSL Initialization ---
 
   // 2. The Master Process forks off multiple worker processes.
   for (i = 0; i < NUM_WORKERS; i++) {

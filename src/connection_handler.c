@@ -1,3 +1,4 @@
+#include "ssl.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <glib.h>
@@ -23,7 +24,7 @@
 // Function to handle a new incoming connection on the listening socket.
 void handle_new_connection(int listen_sock, int epoll_fd,
                            GHashTable *client_states_map,
-                           int *active_connections_ptr) {
+                           int *active_connections_ptr, SSL_CTX *ssl_ctx) {
   int conn_sock;
   struct sockaddr_in client_addr;
   socklen_t client_len;
@@ -64,6 +65,11 @@ void handle_new_connection(int listen_sock, int epoll_fd,
     return;
   }
 
+  // --- SSL: Create and set up SSL object for the new connection ---
+  SSL *ssl = SSL_new(ssl_ctx);
+  SSL_set_fd(ssl, conn_sock);
+  // --- End SSL ---
+
   client_state = (client_state_t *)malloc(sizeof(client_state_t));
   if (client_state == NULL) {
     fprintf(stderr, "ERROR: The server ran out of memory while trying to "
@@ -77,7 +83,8 @@ void handle_new_connection(int listen_sock, int epoll_fd,
 
   memset(client_state, 0, sizeof(client_state_t));
   client_state->fd = conn_sock;
-  client_state->state = STATE_READING_REQUEST;
+  client_state->state = STATE_TLS_HANDSHAKE; // New initial state
+  client_state->ssl = ssl; // Store the SSL object in the client state
   client_state->last_activity_time = time(NULL);
   client_state->timeout_heap_index = -1;
 
@@ -92,7 +99,8 @@ void handle_new_connection(int listen_sock, int epoll_fd,
   g_hash_table_insert(client_states_map, GINT_TO_POINTER(conn_sock),
                       client_state);
 
-  event.events = EPOLLIN;
+  // Initial event is for handshake, which requires EPOLLIN
+  event.events = EPOLLIN | EPOLLOUT | EPOLLET;
   event.data.ptr = client_state;
   if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, conn_sock, &event) == -1) {
     fprintf(stderr, "ERROR: Failed to add new client %d to the event loop.\n",
@@ -144,6 +152,12 @@ void close_client_connection(int epoll_fd, client_state_t *client_state,
   // Close the file descriptor.
   close(current_fd);
 
+  // --- SSL: Clean up the SSL object ---
+  if (client_state->ssl) {
+    SSL_free(client_state->ssl);
+  }
+  // --- End SSL ---
+
   // Remove the client from the hash table. This will free the memory.
   g_hash_table_remove(client_states_map, GINT_TO_POINTER(current_fd));
 
@@ -172,6 +186,21 @@ void handle_client_event(int epoll_fd, struct epoll_event *event_ptr,
   }
   int current_fd = client_state->fd;
   uint32_t event_flags = event_ptr->events;
+
+  if (client_state->state == STATE_TLS_HANDSHAKE) {
+    int result = perform_ssl_handshake(client_state->ssl);
+    if (result == 1) {
+      printf("INFO: Client %d TLS handshake successful.\n", client_state->fd);
+      // Handshake is complete, move to the next state
+      transition_state(epoll_fd, client_state, STATE_READING_REQUEST,
+                       client_states_map, active_connections_ptr);
+    } else if (result == -1) {
+      // Handshake failed, close connection
+      transition_state(epoll_fd, client_state, STATE_CLOSED, client_states_map,
+                       active_connections_ptr);
+    }
+    return; // Return immediately, handshake is the only thing we're doing
+  }
 
   if (event_flags & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
     printf("INFO: Client %d disconnected or an error occurred.\n", current_fd);

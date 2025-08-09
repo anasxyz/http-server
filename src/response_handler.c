@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <glib.h>
 #include <netinet/in.h>
+#include <openssl/err.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +15,7 @@
 #include "response_handler.h"
 #include "server.h"
 #include "state_handler.h"
+#include "ssl.h"
 
 // Function to handle writing data to a client socket
 // Returns 1 if the connection should be closed, 0 otherwise.
@@ -24,8 +26,6 @@ int handle_write_event(client_state_t *client_state, int epoll_fd,
   ssize_t bytes_transferred;
 
   if (client_state->state != STATE_WRITING_RESPONSE) {
-    // printf("WARNING: Client %d received EPOLLOUT but not in WRITING_RESPONSE
-    // state. Closing.\n", current_fd);
     transition_state(epoll_fd, client_state, STATE_CLOSED, client_states_map,
                      active_connections_ptr);
     return 0;
@@ -35,25 +35,26 @@ int handle_write_event(client_state_t *client_state, int epoll_fd,
       client_state->out_buffer_len - client_state->out_buffer_sent;
 
   if (remaining_to_send > 0) {
-    bytes_transferred = write(
-        current_fd, client_state->out_buffer + client_state->out_buffer_sent,
+    // --- SSL: Use ssl_write_wrapper instead of write ---
+    bytes_transferred = ssl_write_wrapper(
+        client_state->ssl, client_state->out_buffer + client_state->out_buffer_sent,
         remaining_to_send);
+    // --- End SSL ---
 
-    if (bytes_transferred == -1) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        return 0;
-      } else {
-        fprintf(
-            stderr,
-            "ERROR: An error occurred while sending a response to client %d.\n",
-            current_fd);
-#ifdef VERBOSE_MODE
-        perror("REASON: write client socket failed");
-#endif
-        transition_state(epoll_fd, client_state, STATE_CLOSED,
-                         client_states_map, active_connections_ptr);
-        return 0;
+    if (bytes_transferred <= 0) {
+      int err = SSL_get_error(client_state->ssl, bytes_transferred);
+      if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+        return 0; // No more data can be written for now
+      } else if (err == SSL_ERROR_SYSCALL) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+          return 0;
+        }
       }
+      fprintf(stderr, "ERROR: SSL_write error on client %d.\n", current_fd);
+      ERR_print_errors_fp(stderr);
+      transition_state(epoll_fd, client_state, STATE_CLOSED,
+                       client_states_map, active_connections_ptr);
+      return 0;
     } else {
       client_state->out_buffer_sent += bytes_transferred;
 
@@ -73,8 +74,6 @@ int handle_write_event(client_state_t *client_state, int epoll_fd,
       return 0;
     }
   } else {
-    // printf("DEBUG: EPOLLOUT on client %d but nothing to send. Closing.\n",
-    // current_fd);
     transition_state(epoll_fd, client_state, STATE_CLOSED, client_states_map,
                      active_connections_ptr);
     return 0;
