@@ -11,6 +11,7 @@
 - ✅ Event-driven architecture.
 - ✅ Non-blocking I/O.
 - ✅ Support for keep-alive connections.
+- ✅ Support for HTTPS/TLS encryption.
 
 ---
 
@@ -21,7 +22,7 @@
 - ❌ Routing engine supporting URL rewriting and redirection, fallback files, and aliasing.
 - ❌ Reverse proxying to upstream backend servers.  
 - ❌ Advanced configuration support for environment variables and dynamic reloads without downtime.
-- ❌ Security features including access control, hidden file protection, IP address filtering, and support for HTTPS/TLS encryption.
+- ❌ Security features including access control, hidden file protection, and IP address filtering.
 - ❌ HTTP/2 support with pipelining and request multiplexing.
 - ❌ Support for virtual hosts (multiple domains on one server).
 - ❌ Support for HTTP caching headers, ETags, and conditional GET requests. 
