@@ -1,11 +1,11 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <fcntl.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "util.h"
 
 int setup_listening_socket(int port) {
   int listen_sock;
@@ -14,18 +14,15 @@ int setup_listening_socket(int port) {
 
   listen_sock = socket(AF_INET, SOCK_STREAM, 0);
   if (listen_sock == -1) {
-    fprintf(stderr, "ERROR: Failed to create a listening socket. The server "
-                    "cannot start.\n");
-#ifdef VERBOSE_MODE
-    perror("REASON: socket creation failed");
-#endif
+    logs('E', "Failed to create a listening socket. The server cannot start.",
+         "socket creation failed");
     return -1;
   }
 
   if (setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) ==
       -1) {
-    fprintf(stderr, "ERROR: Failed to configure socket options. The server "
-                    "cannot start.\n");
+    logs('E', "Failed to configure socket options. The server cannot start.",
+         "setsockopt SO_REUSEADDR failed");
     close(listen_sock);
     return -1;
   }
@@ -41,6 +38,9 @@ int setup_listening_socket(int port) {
             "ERROR: Failed to bind the socket to port %d. The port may be in "
             "use.\n",
             port);
+#ifdef VERBOSE_MODE
+    perror("REASON: bind failed");
+#endif
     close(listen_sock);
     return -1;
   }
@@ -65,4 +65,3 @@ int setup_listening_socket(int port) {
 
   return listen_sock;
 }
-
