@@ -1,0 +1,75 @@
+#ifndef _CONFIG_H_
+#define _CONFIG_H_
+
+// forward declaration to allow for nested pointers
+typedef struct location_config location_config;
+typedef struct ssl_config ssl_config;
+typedef struct server_config server_config;
+typedef struct http_config http_config;
+typedef struct config config;
+
+// represents a single location block within a server block
+typedef struct location_config {
+  char *uri;           // could be "/" or "/images" or whatever
+  char *root_dir;      // overrides the default root directory in server block
+  char **index_files;  // overrides the default index files in server block
+  char *proxy_url;     // for reverse proxying
+  int autoindex;       // 0 for off, 1 for on
+  char **allowed_ips;  // array of allowed ips
+  int num_allowed_ips; // number of allowed ips
+  char **denied_ips;   // array of denied ips
+  int num_denied_ips;  // number of denied ips
+  int return_status; // overrides the default return status code in server block
+  char *return_url_text; // overrides the default return text in server block
+
+  char *etag_header;
+  char *expires_header;
+} location_config;
+
+// represents the ssl config for a server block
+typedef struct ssl_config {
+  char *cert_file;   // path to certificate file
+  char *key_file;    // path to key file
+  char **protocols;  // array of protocols
+  int num_protocols; // number of protocols
+  char **ciphers;    // array of ciphers
+  int num_ciphers;   // number of ciphers
+} ssl_config;
+
+// represents a single server block or virtual host
+typedef struct server_config {
+  int listen_port;             // port to listen on
+  char **server_names;         // array of server names
+  char *root_dir;              // default root dir for all locations
+  char **index_files;          // adefault index files for all locations
+  ssl_config *ssl;             // ssl config
+  location_config **locations; // array of locations
+  int num_locations;           // number of locations
+  int return_status;           // server-level redirects
+  char *return_url_text;       // url server-level redirects
+
+  char *access_log_path; // overrides the default access log path in http block
+  char *error_log_path;  // overrides the default error log path in http block
+
+  server_config *next; // pointe to next server block
+} server_config;
+
+typedef struct http_config {
+  char *mime_types_file;
+  char *default_type;
+  char *access_log_path;
+  char *error_log_path;
+
+  server_config *servers;
+} http_config;
+
+// top-level config struct for entire configuration
+typedef struct config {
+  int worker_processes;
+  char *user;
+  char *pid_file;
+  char *log_file;
+  http_config *http;
+} config;
+
+#endif // _CONFIG_H_
