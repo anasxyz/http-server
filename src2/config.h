@@ -8,6 +8,8 @@ typedef struct server_config server_config;
 typedef struct http_config http_config;
 typedef struct config config;
 
+extern config *global_config;
+
 // represents a single location block within a server block
 typedef struct location_config {
   char *uri;           // could be "/" or "/images" or whatever
@@ -50,17 +52,17 @@ typedef struct server_config {
 
   char *access_log_path; // overrides the default access log path in http block
   char *error_log_path;  // overrides the default error log path in http block
-
-  server_config *next; // pointe to next server block
 } server_config;
 
 typedef struct http_config {
-  char *mime_types_file;
-  char *default_type;
+  char *mime_types_path; // path to mime types file
+  char *default_type; // default MIME type when one isn't found
   char *access_log_path;
   char *error_log_path;
+	char *log_format;
 
   server_config *servers;
+	int num_servers;
 } http_config;
 
 // top-level config struct for entire configuration
@@ -71,5 +73,9 @@ typedef struct config {
   char *log_file;
   http_config *http;
 } config;
+
+void init_config();
+void parse_config();
+void free_config();
 
 #endif // _CONFIG_H_
