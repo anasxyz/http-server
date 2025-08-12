@@ -3,17 +3,22 @@
 
 #include "util.h"
 
-int verbose_mode = 0;
+int logs_enabled = 1;
+int verbose_mode_enabled = 1;
 
 void logs(char type, const char *fmt, const char *extra_fmt, ...) {
+	if (!logs_enabled) {
+		return;
+	}
+
   va_list args;
   va_start(args, extra_fmt);
 
-  // Copy the variadic arguments so we can use them twice
+  // copy the variadic arguments so we can use them twice
   va_list args_copy;
   va_copy(args_copy, args);
 
-  // Print prefix
+  // print prefix
   switch (type) {
   case 'E':
     fprintf(stderr, "ERROR: ");
@@ -34,13 +39,13 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
     return;
   }
 
-  // Print main message
+  // print main message
   vfprintf(stderr, fmt, args);
   fprintf(stderr, "\n");
 
-  // Print extra if in verbose mode
-  if (extra_fmt && verbose_mode) {
-    fprintf(stderr, "REASON: ");
+  // print extra if in verbose mode
+  if (extra_fmt && verbose_mode_enabled) {
+    fprintf(stderr, "EXTRA: ");
     vfprintf(stderr, extra_fmt, args_copy);
     fprintf(stderr, "\n");
   }
