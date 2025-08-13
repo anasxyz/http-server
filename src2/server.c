@@ -85,7 +85,6 @@ int read_request(int sock, char *buffer, size_t buf_size) {
     return bytes_read;
   }
   buffer[bytes_read] = '\0'; // Null-terminate the string
-  logs('D', "Read request from client.", buffer);
   return bytes_read;
 }
 
@@ -95,8 +94,6 @@ int write_response(int sock, const char *response_msg) {
   if (bytes_written < 0) {
     logs('E', "Failed to write response to client.",
          "write_response(): write() failed.");
-  } else {
-    logs('D', "Wrote response to client.", response_msg);
   }
   return bytes_written;
 }
@@ -124,7 +121,45 @@ void handle_client(int client_sock) {
   }
 }
 
-void run_worker(int listen_sockets[], int num_sockets) {
+int handle_new_connection(int connection_socket, int epoll_fd) {
+  struct sockaddr_in client_address;
+  socklen_t client_address_len;
+  struct epoll_event event;
+  client_address_len = sizeof(client_address);
+
+  // accept client's connection
+  int client_sock =
+      accept(connection_socket, (struct sockaddr *)&client_address,
+             &client_address_len);
+  if (client_sock == -1) {
+    logs('E', "Failed to accept connection.",
+         "handle_new_connection(): accept() failed.");
+    return -1;
+  }
+
+  // convert the client's IP address from network to a string
+  char *client_ip = inet_ntoa(client_address.sin_addr);
+
+  // set client's socket to non-blocking
+  set_nonblocking(client_sock);
+
+  // add client's socket to epoll instance
+  event.events = EPOLLIN;
+  event.data.fd = client_sock;
+  if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_sock, &event) == -1) {
+    logs('E', "Failed to add client socket to epoll.",
+         "handle_new_connection(): epoll_ctl() failed.");
+    close(client_sock);
+    return -1;
+  }
+
+  logs('I', "Accepted connection %s (socket %d).", NULL, client_ip,
+       client_sock);
+
+  return 0;
+}
+
+void run_worker(int *listen_sockets, int num_sockets) {
   // --- Start epoll setup ---
   int epoll_fd;
   struct epoll_event event;
@@ -176,33 +211,18 @@ void run_worker(int listen_sockets[], int num_sockets) {
       }
 
       if (is_listening_socket) {
-        // TODO: handle new connection
+        // handle new connection
+        handle_new_connection(current_fd, epoll_fd);
       } else {
-        // TODO: handle client event
+        // handle client event
+        handle_client(current_fd);
       }
     }
   }
 }
 
-int main() {
-  logs('I', "Starting server...", NULL);
-
-  // init config (leave parse_config() for now)
-  init_config();
-
-  // check if config is valid
-  if (global_config->http->num_servers == 0) {
-    logs('E', "No servers configured.", NULL);
-    exit(1);
-  }
-  if (global_config->worker_processes == 0) {
-    logs('E', "No worker processes configured.", NULL);
-    exit(1);
-  }
-
-  // setup listening sockets
+void init_sockets(int *listen_sockets) {
   server_config *servers = global_config->http->servers;
-  int listen_sockets[global_config->http->num_servers];
 
   for (int i = 0; i < global_config->http->num_servers; i++) {
     listen_sockets[i] = setup_listening_socket(servers[i].listen_port);
@@ -211,7 +231,9 @@ int main() {
       exit(1);
     }
   }
+}
 
+void fork_workers(int *listen_sockets) {
   // fork worker processes
   for (int i = 0; i < global_config->worker_processes; i++) {
     pid_t pid = fork();
@@ -219,27 +241,66 @@ int main() {
       logs('E', "Failed to fork worker process.", NULL);
       exit(1);
     }
-		// child process
+    // child process
     if (pid == 0) {
       logs('I', "Worker process %d started", NULL, i);
       run_worker(listen_sockets, global_config->http->num_servers);
       exit(0);
     }
   }
+}
 
-	// master process waits for all childen to finish
-	// TODO: handle signals
-	logs('I', "Master process is waiting for workers to finish.", NULL);
-	for (int i = 0; i < global_config->worker_processes; i++) {
-		wait(NULL);
-	}
+void server_cleanup(int *listen_sockets) {
+  // master process waits for all childen to finish
+  // TODO: handle signals
+  logs('I', "Master process is waiting for workers to finish.", NULL);
+  for (int i = 0; i < global_config->worker_processes; i++) {
+    wait(NULL);
+  }
 
-	// clean up
-	for (int i = 0; i < global_config->http->num_servers; i++) {
-		close(listen_sockets[i]);
-	}
+  // clean up
+  for (int i = 0; i < global_config->http->num_servers; i++) {
+    close(listen_sockets[i]);
+  }
+}
 
-	// TODO: free_config here when it's implemented
+void check_valid_config() {
+  if (global_config->http->num_servers == 0) {
+    logs('E', "No servers configured.", NULL);
+    exit(1);
+  }
+  if (global_config->worker_processes == 0) {
+    logs('E', "No worker processes configured.", NULL);
+    exit(1);
+  }
+}
+
+int main() {
+  logs('I', "Starting server...", NULL);
+
+  // init config
+  init_config();
+
+	// TODO: parse config (leave for now)
+	// parse_config();
+
+  // check if config is valid
+	check_valid_config();
+
+  // setup listening sockets
+  int listen_sockets[global_config->http->num_servers];
+
+	// fill socket array with server block sockets
+  init_sockets(listen_sockets);
+
+	// fork worker processes
+  fork_workers(listen_sockets);
+
+	// clean up server resources
+  server_cleanup(listen_sockets);
+
+  // TODO: free_config here when it's implemented
+	// free_config();
 
   return 0;
 }
