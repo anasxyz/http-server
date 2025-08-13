@@ -17,7 +17,7 @@ void init_config() {
   }
 
   // init top-level config struct attributes
-  global_config->worker_processes = 1;
+  global_config->worker_processes = 4;
   global_config->user = NULL;
   global_config->pid_file = NULL;
   global_config->log_file = NULL;

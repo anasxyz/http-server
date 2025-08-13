@@ -16,10 +16,61 @@
 #include "util.h"
 
 #define MAX_EVENTS 1024
+#define MAX_BUFFER_SIZE 8192
 
 typedef struct {
-	int fd;
+  char *key;
+  char *value;
+} header_t;
 
+typedef struct {
+  char *method;
+  char *uri;
+  char *version;
+} request_line_t;
+
+typedef struct {
+  request_line_t request_line;
+  header_t *headers;
+  size_t num_headers;
+  char *body;
+  size_t body_len;
+} request_t;
+
+typedef struct {
+  char *version;
+  int status_code;
+  char *status_message;
+} response_line_t;
+
+typedef struct {
+  response_line_t response_line;
+  header_t *headers;
+  size_t num_headers;
+} response_t;
+
+typedef enum {
+  READING,
+  WRITING,
+  IDLE,
+  CLOSING,
+} state_e;
+
+typedef struct {
+  int fd;
+  char *ip;
+
+  char in_buffer[MAX_BUFFER_SIZE];
+  size_t in_buffer_len;
+
+  char out_buffer[MAX_BUFFER_SIZE];
+  size_t out_buffer_len;
+  size_t out_buffer_sent;
+
+  state_e state;
+
+  request_t *request;
+  response_t *response;
 } client_t;
 
 void exits() {
@@ -97,6 +148,51 @@ int read_request(int sock, char *buffer, size_t buf_size) {
   }
   buffer[bytes_read] = '\0'; // Null-terminate the string
   return bytes_read;
+}
+
+void read_client_request(client_t *client) {
+  char temp_buffer[MAX_BUFFER_SIZE];
+  ssize_t bytes_read;
+
+  // keep reading until we get a full request
+  while (1) {
+    // read the raw request into temporary buffer
+    bytes_read = read(client->fd, temp_buffer, MAX_BUFFER_SIZE);
+
+    // if read() return 0, it means the client closed the connection
+    if (bytes_read == 0) {
+      client->state = CLOSING;
+      logs('I', "Client %s disconnected.", NULL, client->ip);
+      break;
+    }
+
+    // if read() returns -1, it means there's an error
+    if (bytes_read == -1) {
+			// if error is EAGAIN or EWOULDBLOCK, it means that there is no more data to read right now
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        logs('D', "No more data to read from Client %s", NULL, client->ip);
+        break;
+      } else {
+				// a real error occured, so handle it
+				client->state = CLOSING;
+			}
+    }
+
+    // if we got this far, this means that bytes_read > 0
+    // so add the new data to client's in_buffer
+		// check for buffer overflow first before copying data
+		// if new data exceeds fixed size buffer then treat as error
+    if (client->in_buffer_len + bytes_read >= MAX_BUFFER_SIZE) {
+			client->state = CLOSING;
+		}
+
+		// copy new data from temp buffer into client main buffer
+		memcpy(client->in_buffer + client->in_buffer_len, temp_buffer, bytes_read);
+		client->in_buffer_len += bytes_read;
+
+		// null terminate for easier parsing late
+		client->in_buffer[client->in_buffer_len] = '\0';
+  }
 }
 
 // Writes a hardcoded response to the client socket.
@@ -179,24 +275,34 @@ int handle_new_connection(int connection_socket, int epoll_fd) {
     return -1;
   }
 
-  // convert the client's IP address from network to a string
-  char *client_ip = inet_ntoa(client_address.sin_addr);
-
   // set client's socket to non-blocking
   set_nonblocking(client_sock);
 
+	// allocate and initialise new client struct for this connection
+	client_t *client = malloc(sizeof(client_t));
+	client->fd = client_sock;
+	client->ip = strdup(inet_ntoa(client_address.sin_addr));
+	memset(client->in_buffer, 0, MAX_BUFFER_SIZE);
+	client-> in_buffer_len = 0;
+	memset(client->out_buffer, 0, MAX_BUFFER_SIZE);
+	client->out_buffer_len = 0;
+	client->out_buffer_sent = 0;
+	client->state = IDLE;
+	client->request = NULL;
+	client->response = NULL;
+
   // add client's socket to epoll instance
   event.events = EPOLLIN;
-  event.data.fd = client_sock;
-  if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_sock, &event) == -1) {
+  event.data.fd = client->fd;
+  if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client->fd, &event) == -1) {
     logs('E', "Failed to add client socket to epoll.",
          "handle_new_connection(): epoll_ctl() failed.");
-    close(client_sock);
+    close(client->fd);
     return -1;
   }
 
-  logs('I', "Accepted connection %s (socket %d).", NULL, client_ip,
-       client_sock);
+  logs('I', "Accepted connection %s (socket %d).", NULL, client->ip,
+       client->fd);
 
   return 0;
 }
