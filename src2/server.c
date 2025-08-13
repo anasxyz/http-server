@@ -6,7 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/sendfile.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -14,6 +16,16 @@
 #include "util.h"
 
 #define MAX_EVENTS 1024
+
+typedef struct {
+	int fd;
+
+} client_t;
+
+void exits() {
+  fprintf(stderr, "EXIT: Error occured. Exiting.");
+  exit(1);
+}
 
 int set_nonblocking(int fd) {
   int flags = fcntl(fd, F_GETFL, 0);
@@ -34,14 +46,14 @@ int setup_listening_socket(int port) {
   listen_sock = socket(AF_INET, SOCK_STREAM, 0);
   if (listen_sock == -1) {
     logs('E', "Failed to create a listening socket.",
-         "setup_listening_socket(): socket creation failed.\n");
+         "setup_listening_socket(): socket creation failed.");
     return -1;
   }
 
   if (setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) ==
       -1) {
     logs('E', "Failed to configure socket options.",
-         "setup_listening_socket(): setsockopt() with SO_REUSEADDR failed.\n");
+         "setup_listening_socket(): setsockopt() with SO_REUSEADDR failed.");
     close(listen_sock);
     return -1;
   }
@@ -54,22 +66,21 @@ int setup_listening_socket(int port) {
   if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) ==
       -1) {
     logs('E', "Failed to bind the socket to port %d.",
-         "setup_listening_socket(): bind() failed, port may be in use.\n",
-         port);
+         "setup_listening_socket(): bind() failed, port may be in use.", port);
     close(listen_sock);
     return -1;
   }
 
   if (listen(listen_sock, 10) == -1) {
     logs('E', "Failed to prepare the socket for incoming connections.",
-         "setup_listening_socket(): listen() failed.\n");
+         "setup_listening_socket(): listen() failed.");
     close(listen_sock);
     return -1;
   }
 
   if (set_nonblocking(listen_sock) == -1) {
     logs('E', "Failed to configure socket to non-blocking.",
-         "setup_listening_socket(): set_nonblocking() failed.\n");
+         "setup_listening_socket(): set_nonblocking() failed.");
     close(listen_sock);
     return -1;
   }
@@ -104,20 +115,51 @@ void handle_client(int client_sock) {
 
   // Read the dummy request
   if (read_request(client_sock, buffer, 1024) > 0) {
-    // Create a simple, hardcoded HTTP response
-    const char *response_body = "<h1>Hello from your simple server!</h1>";
+    char *file_path = "/var/www/index.html";
+    struct stat st;
+    long file_size;
+    int file_fd;
+
+    // Open the file using the low-level open() to get an integer file
+    // descriptor
+    file_fd = open(file_path, O_RDONLY);
+    if (file_fd == -1) {
+      logs('E', "Failed to open file %s.", "handle_client(): open() failed.",
+           file_path);
+      // Send a 404 Not Found response
+      const char *not_found_response = "HTTP/1.1 404 Not Found\r\n"
+                                       "Content-Length: 0\r\n"
+                                       "\r\n";
+      write_response(client_sock, not_found_response);
+      return;
+    }
+
+    // Get the file size using fstat, which is more robust than fseek/ftell
+    if (fstat(file_fd, &st) == -1) {
+      logs('E', "Failed to get file size for %s.",
+           "handle_client(): fstat() failed.", file_path);
+      close(file_fd);
+      return;
+    }
+    file_size = st.st_size;
+
+    // Create the HTTP response headers with the correct file size
     const char *http_response_template = "HTTP/1.1 200 OK\r\n"
                                          "Content-Type: text/html\r\n"
                                          "Content-Length: %zu\r\n"
-                                         "\r\n"
-                                         "%s";
+                                         "\r\n";
 
-    char full_response[1024];
-    snprintf(full_response, sizeof(full_response), http_response_template,
-             strlen(response_body), response_body);
+    char headers[1024];
+    snprintf(headers, sizeof(headers), http_response_template, file_size);
 
-    // Write the dummy response
-    write_response(client_sock, full_response);
+    // Send the HTTP headers first
+    write_response(client_sock, headers);
+
+    // Then, send the file content using sendfile
+    sendfile(client_sock, file_fd, NULL, file_size);
+
+    // Close the file descriptor
+    close(file_fd);
   }
 }
 
@@ -171,7 +213,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
   if (epoll_fd == -1) {
     logs('E', "Worker failed to create epoll instance.",
          "run_worker(): epoll_create1() failed.");
-    exit(1);
+    exits();
   }
 
   // add the listening sockets to the epoll instance
@@ -182,7 +224,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
       logs('E', "Worker failed to register listening socket.",
            "run_worker(): epoll_ctl() failed.");
       close(epoll_fd);
-      exit(1);
+      exits();
     }
   }
   // --- End epoll setup ---
@@ -195,7 +237,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
       }
       logs('E', "Worker's epoll_wait failed.",
            "run_worker(): epoll_wait() failed.");
-      exit(1);
+      exits();
     }
 
     for (int i = 0; i < num_events; i++) {
@@ -226,9 +268,10 @@ void init_sockets(int *listen_sockets) {
 
   for (int i = 0; i < global_config->http->num_servers; i++) {
     listen_sockets[i] = setup_listening_socket(servers[i].listen_port);
-    logs('I', "Listening on port %d.", NULL, servers[i].listen_port);
+    logs('I', "%s listening on port %d.", NULL, servers[i].server_name,
+         servers[i].listen_port);
     if (listen_sockets[i] == -1) {
-      exit(1);
+      exits();
     }
   }
 }
@@ -239,13 +282,13 @@ void fork_workers(int *listen_sockets) {
     pid_t pid = fork();
     if (pid < 0) {
       logs('E', "Failed to fork worker process.", NULL);
-      exit(1);
+      exits();
     }
     // child process
     if (pid == 0) {
       logs('I', "Worker process %d started", NULL, i);
       run_worker(listen_sockets, global_config->http->num_servers);
-      exit(0);
+      exits();
     }
   }
 }
@@ -253,7 +296,6 @@ void fork_workers(int *listen_sockets) {
 void server_cleanup(int *listen_sockets) {
   // master process waits for all childen to finish
   // TODO: handle signals
-  logs('I', "Master process is waiting for workers to finish.", NULL);
   for (int i = 0; i < global_config->worker_processes; i++) {
     wait(NULL);
   }
@@ -265,13 +307,40 @@ void server_cleanup(int *listen_sockets) {
 }
 
 void check_valid_config() {
-  if (global_config->http->num_servers == 0) {
+  server_config *servers = global_config->http->servers;
+  int num_servers = global_config->http->num_servers;
+
+  // --- global config checks ---
+  if (num_servers == 0) {
     logs('E', "No servers configured.", NULL);
-    exit(1);
+    exits();
   }
   if (global_config->worker_processes == 0) {
     logs('E', "No worker processes configured.", NULL);
-    exit(1);
+    exits();
+  }
+
+  // --- server config checks ---
+  for (int i = 0; i < num_servers; i++) {
+    if (!servers[i].server_name) {
+      char default_name[32];
+      snprintf(default_name, sizeof(default_name), "server%d", i + 1);
+      servers[i].server_name = strdup(default_name);
+      logs('W', "No name configured for server %d. Setting to default: %s",
+           NULL, i + 1, default_name);
+    }
+
+    if (!servers[i].listen_port) {
+      logs('E', "No port configured for server %s", NULL,
+           servers[i].server_name);
+      exits();
+    }
+    if (servers[i].listen_port < 1024) {
+      logs('E',
+           "Invalid port number. Configure a different port for %s (>1024).",
+           NULL, servers[i].server_name);
+      exits();
+    }
   }
 }
 
@@ -281,26 +350,26 @@ int main() {
   // init config
   init_config();
 
-	// TODO: parse config (leave for now)
-	// parse_config();
+  // TODO: parse config (leave for now)
+  // parse_config();
 
   // check if config is valid
-	check_valid_config();
+  check_valid_config();
 
   // setup listening sockets
   int listen_sockets[global_config->http->num_servers];
 
-	// fill socket array with server block sockets
+  // fill socket array with server block sockets
   init_sockets(listen_sockets);
 
-	// fork worker processes
+  // fork worker processes
   fork_workers(listen_sockets);
 
-	// clean up server resources
+  // clean up server resources
   server_cleanup(listen_sockets);
 
   // TODO: free_config here when it's implemented
-	// free_config();
+  // free_config();
 
   return 0;
 }

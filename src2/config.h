@@ -40,15 +40,15 @@ typedef struct ssl_config {
 
 // represents a single server block or virtual host
 typedef struct server_config {
-  int listen_port;             // port to listen on
-  char **server_names;         // array of server names
-  char *root_dir;              // default root dir for all locations
-  char **index_files;          // adefault index files for all locations
-  ssl_config *ssl;             // ssl config
-  location_config **locations; // array of locations
-  int num_locations;           // number of locations
-  int return_status;           // server-level redirects
-  char *return_url_text;       // url server-level redirects
+  int listen_port;            // port to listen on
+  char *server_name;          // array of server names
+  char *root_dir;             // default root dir for all locations
+  char **index_files;         // default index files for all locations
+  ssl_config *ssl;            // ssl config
+  location_config *locations; // array of locations
+  int num_locations;          // number of locations
+  int return_status;          // server-level redirects
+  char *return_url_text;      // url server-level redirects
 
   char *access_log_path; // overrides the default access log path in http block
   char *error_log_path;  // overrides the default error log path in http block
@@ -56,13 +56,13 @@ typedef struct server_config {
 
 typedef struct http_config {
   char *mime_types_path; // path to mime types file
-  char *default_type; // default MIME type when one isn't found
+  char *default_type;    // default MIME type when one isn't found
   char *access_log_path;
   char *error_log_path;
-	char *log_format;
+  char *log_format;
 
   server_config *servers;
-	int num_servers;
+  int num_servers;
 } http_config;
 
 // top-level config struct for entire configuration

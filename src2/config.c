@@ -40,8 +40,8 @@ void init_config() {
   global_config->http->servers = NULL;
   global_config->http->num_servers = 0;
 
-  // hardcoded server config for testing
-  global_config->http->num_servers = 2;
+  // hardcoded server config for testing (remove later and actually use parse_config())
+  global_config->http->num_servers = 3;
   global_config->http->servers = (server_config *)malloc(
       sizeof(server_config) * global_config->http->num_servers);
   if (global_config->http->servers == NULL) {
@@ -52,6 +52,7 @@ void init_config() {
 
   global_config->http->servers[0].listen_port = 8080;
   global_config->http->servers[1].listen_port = 8443;
+  global_config->http->servers[2].listen_port = 9090;
 
 }
 
