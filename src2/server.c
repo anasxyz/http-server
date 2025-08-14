@@ -55,7 +55,6 @@ typedef struct {
 typedef enum {
   READING,
   WRITING,
-  IDLE,
   CLOSING,
 } state_e;
 
@@ -75,6 +74,68 @@ typedef struct {
   request_t *request;
   response_t *response;
 } client_t;
+
+// forward declarations of all functions in this file
+void transition_state(client_t *client, int epoll_fd, state_e new_state);
+int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events);
+int handle_new_connection(int connection_socket, int epoll_fd);
+void close_connection(client_t *client, int epoll_fd);
+
+int read_client_request(client_t *client);
+
+void send_headers(client_t *client, int epoll_fd);
+void write_client_response(client_t *client, int epoll_fd);
+int write_response(int sock, const char *response_msg);
+
+void serve_file(client_t *client, int epoll_fd);
+void run_worker(int *listen_sockets, int num_sockets);
+void init_sockets(int *listen_sockets);
+void fork_workers(int *listen_sockets);
+void server_cleanup(int *listen_sockets);
+void check_valid_config();
+
+// ##############################################################################
+// ## state transitions
+// ##############################################################################
+
+void transition_state(client_t *client, int epoll_fd, state_e new_state) {
+  state_e current_state = client->state;
+  struct epoll_event event;
+
+  switch (current_state) {
+  case READING:
+    if (set_epoll(epoll_fd, client, EPOLLOUT) == -1) {
+      break;
+    }
+    client->state = new_state;
+    logs('I', "Transitioned connection %s from READING to WRITING.", NULL,
+         client->ip);
+
+    break;
+  case WRITING:
+    if (set_epoll(epoll_fd, client, EPOLLIN) == -1) {
+      break;
+    }
+    client->state = new_state;
+    logs('I', "Transitioned connection %s from WRITING to READING.", NULL,
+         client->ip);
+    break;
+  case CLOSING:
+    close_connection(client, epoll_fd);
+    logs('I', "Transitioned connection %s to CLOSING.", NULL, client->ip);
+    break;
+  }
+}
+
+int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events) {
+  struct epoll_event event;
+  event.events = epoll_events;
+  event.data.fd = client->fd;
+  if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &event) == -1) {
+    return -1;
+  }
+  return 0;
+}
 
 // ##############################################################################
 // ## connection handling
@@ -115,7 +176,7 @@ int handle_new_connection(int connection_socket, int epoll_fd) {
   memset(client->out_buffer, 0, MAX_BUFFER_SIZE);
   client->out_buffer_len = 0;
   client->out_buffer_sent = 0;
-  client->state = IDLE;
+  client->state = READING;
   client->request = NULL;
   client->response = NULL;
 
@@ -134,6 +195,8 @@ int handle_new_connection(int connection_socket, int epoll_fd) {
 
   logs('I', "Accepted connection %s (socket %d).", NULL, client->ip,
        client->fd);
+
+	logs('I', "Transitioned connection %s from NOTHING to READING.", NULL, client->ip);
 
   return 0;
 }
@@ -175,8 +238,6 @@ int read_client_request(client_t *client) {
 
     // if read() return 0, it means the client closed the connection
     if (bytes_read == 0) {
-      client->state = CLOSING;
-      logs('I', "Client %s disconnected.", NULL, client->ip);
       return -1;
     }
 
@@ -186,11 +247,9 @@ int read_client_request(client_t *client) {
       // to read right now
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         logs('D', "No more data to read from Client %s", NULL, client->ip);
-        client->state = READING;
         return 0;
       } else {
         // a real error occured, so handle it
-        client->state = CLOSING;
         return -1;
       }
     }
@@ -200,7 +259,6 @@ int read_client_request(client_t *client) {
     // check for buffer overflow first before copying data
     // if new data exceeds fixed size buffer then treat as error
     if (client->in_buffer_len + bytes_read >= MAX_BUFFER_SIZE) {
-      client->state = CLOSING;
       return -1;
     }
 
@@ -225,19 +283,37 @@ void send_headers(client_t *client, int epoll_fd) {
 
 // this function sends the headers and the file / body
 void write_client_response(client_t *client, int epoll_fd) {
-	// first send the headers
-	// then determine if the body is a file or a string
-	// if it's a file, send it using serve_file()
-	// if it's a string, send it using write_response()
+  // first send the headers
+  // then determine if the body is a file or a string
+  // if it's a file, send it using serve_file()
+  // if it's a string, send it using write_response()
 }
 
 // function for writing normal full response to client
 int write_response(int sock, const char *response_msg) {
-  int bytes_written = write(sock, response_msg, strlen(response_msg));
+  // Minimal HTTP/1.1 response
+  const char *template = "HTTP/1.1 200 OK\r\n"
+                         "Content-Type: text/plain\r\n"
+                         "Content-Length: %zu\r\n"
+                         "Connection: close\r\n"
+                         "\r\n"
+                         "%s";
 
+  char buffer[MAX_BUFFER_SIZE];
+  int len = snprintf(buffer, sizeof(buffer), template, strlen(response_msg),
+                     response_msg);
+
+  if (len < 0 || len >= (int)sizeof(buffer)) {
+    logs('E', "Failed to format HTTP response.",
+         "write_response(): snprintf() failed or truncated.");
+    return -1;
+  }
+
+  int bytes_written = write(sock, buffer, len);
   if (bytes_written < 0) {
     logs('E', "Failed to write response to client.",
          "write_response(): write() failed.");
+    return -1;
   }
   return bytes_written;
 }
@@ -315,10 +391,27 @@ void run_worker(int *listen_sockets, int num_sockets) {
 
         if (events[i].events & EPOLLIN) {
           // it's a read event
-          read_client_request(client);
+          if (read_client_request(client) == 0) {
+            // read returns 0, which means success
+            // transition epoll event to EPOLLOUT and set state to WRITING
+            transition_state(client, epoll_fd, WRITING);
+          } else {
+            // read returns -1, which means error, so close connection
+            transition_state(client, epoll_fd, CLOSING);
+          }
+
         } else if (events[i].events & EPOLLOUT) {
           // it's a write event
-          write_client_response(client, epoll_fd);
+          if (write_response(client->fd, "Hello world") == 0) {
+            // write returns 0, which means success
+            // transition epoll event to EPOLLIN and set state to READING
+            transition_state(client, epoll_fd, READING);
+          } else {
+            // write returns -1, which means error, so close connection
+            transition_state(client, epoll_fd, CLOSING);
+          }
+
+          // TODO: handle keep-alive
         } else {
           logs('E', "Unexpected event on socket %d", NULL, current_fd);
           close_connection(client, epoll_fd);

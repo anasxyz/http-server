@@ -4,6 +4,7 @@
 #include "config.h"
 #include "util.h"
 
+/*
 // --- connection handling ---
 int handle_new_connection(int connection_socket, int epoll_fd);
 void close_connection(client_t *client, int epoll_fd);
@@ -24,5 +25,6 @@ void server_cleanup(int *listen_sockets);
 
 // --- config handling ---
 void check_valid_config();
+*/
 
 #endif // _SERVER_H_
