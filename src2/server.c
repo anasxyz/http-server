@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <glib.h>
 #include <netinet/in.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,20 +60,29 @@ typedef enum {
 } state_e;
 
 typedef struct {
+  // fields for socket
   int fd;
   char *ip;
 
+  // fields for receiving data
   char in_buffer[MAX_BUFFER_SIZE];
   size_t in_buffer_len;
 
+  // fields for sending data
   char out_buffer[MAX_BUFFER_SIZE];
   size_t out_buffer_len;
   size_t out_buffer_sent;
 
+  // fields for state
   state_e state;
 
-  request_t *request;
-  response_t *response;
+  // fields for sending headers
+  bool headers_sent;
+
+  // fields for sending files
+  int file_fd;
+  off_t file_offset;
+  off_t file_size;
 } client_t;
 
 // forward declarations of all functions in this file
@@ -82,10 +92,6 @@ int handle_new_connection(int connection_socket, int epoll_fd);
 void close_connection(client_t *client, int epoll_fd);
 
 int read_client_request(client_t *client);
-
-void send_headers(client_t *client, int epoll_fd);
-void write_client_response(client_t *client, int epoll_fd);
-int write_response(int sock, const char *response_msg);
 
 void serve_file(client_t *client, int epoll_fd);
 void run_worker(int *listen_sockets, int num_sockets);
@@ -108,7 +114,7 @@ void transition_state(client_t *client, int epoll_fd, state_e new_state) {
       break;
     }
     client->state = new_state;
-    logs('I', "Transitioned connection %s from READING to WRITING.", NULL,
+    logs('D', "Transitioned connection %s from READING to WRITING.", NULL,
          client->ip);
 
     break;
@@ -117,12 +123,12 @@ void transition_state(client_t *client, int epoll_fd, state_e new_state) {
       break;
     }
     client->state = new_state;
-    logs('I', "Transitioned connection %s from WRITING to READING.", NULL,
+    logs('D', "Transitioned connection %s from WRITING to READING.", NULL,
          client->ip);
     break;
   case CLOSING:
     close_connection(client, epoll_fd);
-    logs('I', "Transitioned connection %s to CLOSING.", NULL, client->ip);
+    logs('D', "Transitioned connection %s to CLOSING.", NULL, client->ip);
     break;
   }
 }
@@ -140,6 +146,32 @@ int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events) {
 // ##############################################################################
 // ## connection handling
 // ##############################################################################
+
+void initialise_client(client_t *client) {
+  // initialise socket fields
+  client->fd = -1;
+  client->ip = NULL;
+
+  // initialise receiving data fields
+  memset(client->in_buffer, 0, MAX_BUFFER_SIZE);
+  client->in_buffer_len = 0;
+
+  // initialise sending data fields
+  memset(client->out_buffer, 0, MAX_BUFFER_SIZE);
+  client->out_buffer_len = 0;
+  client->out_buffer_sent = 0;
+
+  // initialise state fields
+  client->state = READING;
+
+  // initialise headers fields
+  client->headers_sent = false;
+
+  // initialise file fields
+  client->file_fd = -1;
+  client->file_offset = 0;
+  client->file_size = 0;
+}
 
 int handle_new_connection(int connection_socket, int epoll_fd) {
   struct sockaddr_in client_address;
@@ -169,16 +201,13 @@ int handle_new_connection(int connection_socket, int epoll_fd) {
 
   // allocate and initialise new client struct for this connection
   client_t *client = malloc(sizeof(client_t));
+
+  // initialise client struct to all zeros
+  initialise_client(client);
+
+  // set needed client fields
   client->fd = client_sock;
   client->ip = strdup(inet_ntoa(client_address.sin_addr));
-  memset(client->in_buffer, 0, MAX_BUFFER_SIZE);
-  client->in_buffer_len = 0;
-  memset(client->out_buffer, 0, MAX_BUFFER_SIZE);
-  client->out_buffer_len = 0;
-  client->out_buffer_sent = 0;
-  client->state = READING;
-  client->request = NULL;
-  client->response = NULL;
 
   // insert client into global map
   g_hash_table_insert(client_map, GINT_TO_POINTER(client->fd), client);
@@ -196,7 +225,8 @@ int handle_new_connection(int connection_socket, int epoll_fd) {
   logs('I', "Accepted connection %s (socket %d).", NULL, client->ip,
        client->fd);
 
-	logs('I', "Transitioned connection %s from NOTHING to READING.", NULL, client->ip);
+  logs('D', "Transitioned connection %s from NOTHING to READING.", NULL,
+       client->ip);
 
   return 0;
 }
@@ -277,61 +307,155 @@ int read_client_request(client_t *client) {
 // ## response handling
 // ##############################################################################
 
-void send_headers(client_t *client, int epoll_fd) {
-  // TODO: send headers separately
-}
-
-// this function sends the headers and the file / body
-void write_client_response(client_t *client, int epoll_fd) {
-  // first send the headers
-  // then determine if the body is a file or a string
-  // if it's a file, send it using serve_file()
-  // if it's a string, send it using write_response()
-}
-
-// function for writing normal full response to client
-int write_response(int sock, const char *response_msg) {
-  // Minimal HTTP/1.1 response
-  const char *template = "HTTP/1.1 200 OK\r\n"
-                         "Content-Type: text/plain\r\n"
-                         "Content-Length: %zu\r\n"
-                         "Connection: close\r\n"
-                         "\r\n"
-                         "%s";
-
-  char buffer[MAX_BUFFER_SIZE];
-  int len = snprintf(buffer, sizeof(buffer), template, strlen(response_msg),
-                     response_msg);
-
-  if (len < 0 || len >= (int)sizeof(buffer)) {
-    logs('E', "Failed to format HTTP response.",
-         "write_response(): snprintf() failed or truncated.");
-    return -1;
+// Handles partial writes for a generic buffer.
+// Returns 0 on success, 1 on EAGAIN (partial write), -1 on fatal error.
+int write_partial(client_t *client, const char *buffer, size_t *offset,
+                  size_t len) {
+  size_t remaining = len - *offset;
+  if (remaining == 0) {
+    return 0;
   }
 
-  int bytes_written = write(sock, buffer, len);
+  ssize_t bytes_written = write(client->fd, buffer + *offset, remaining);
+
   if (bytes_written < 0) {
-    logs('E', "Failed to write response to client.",
-         "write_response(): write() failed.");
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      logs('D', "Partial write to client %s", NULL, client->ip);
+      return 1;
+    }
     return -1;
   }
-  return bytes_written;
+
+  *offset += bytes_written;
+
+  if (*offset >= len) {
+    return 0;
+  }
+  return 1;
 }
 
-void serve_file(client_t *client, int epoll_fd) {}
+// Sends a file using sendfile().
+// Returns 0 on success, 1 on EAGAIN (partial write), -1 on fatal error.
+int send_file_body(client_t *client) {
+  if (client->file_offset >= client->file_size) {
+    return 0;
+  }
+
+  ssize_t bytes_sent =
+      sendfile(client->fd, client->file_fd, &client->file_offset,
+               client->file_size - client->file_offset);
+
+  if (bytes_sent < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return 1;
+    }
+    return -1;
+  }
+
+  if (client->file_offset >= client->file_size) {
+    return 0;
+  }
+  return 1;
+}
+
+// Builds an HTTP header string into the provided buffer.
+void build_response_headers(char *buffer, size_t buffer_size,
+                            const char *content_type, size_t content_length) {
+  const char *template = "HTTP/1.1 200 OK\r\n"
+                         "Content-Type: %s\r\n"
+                         "Content-Length: %zu\r\n"
+                         "Connection: keep-alive\r\n"
+                         "\r\n";
+  snprintf(buffer, buffer_size, template, content_type, content_length);
+}
+
+// Handles building and sending a complete response with a small body.
+int send_simple_response(client_t *client, const char *body,
+                         const char *content_type) {
+  size_t body_len = strlen(body);
+
+  if (client->out_buffer_len == 0) {
+    build_response_headers(client->out_buffer, MAX_BUFFER_SIZE, content_type,
+                           body_len);
+    size_t header_len = strlen(client->out_buffer);
+
+    if (header_len + body_len >= MAX_BUFFER_SIZE) {
+      logs('E', "Response body too large for buffer.", NULL);
+      return -1;
+    }
+
+    memcpy(client->out_buffer + header_len, body, body_len);
+    client->out_buffer_len = header_len + body_len;
+    client->out_buffer_sent = 0;
+  }
+
+  int write_status =
+      write_partial(client, client->out_buffer, &client->out_buffer_sent,
+                    client->out_buffer_len);
+
+  if (write_status != 0) {
+    return write_status;
+  }
+
+  client->out_buffer_sent = 0;
+  client->out_buffer_len = 0;
+  return 0;
+}
+
+// Handles sending a file, first the headers, then the file content.
+int send_file_response(client_t *client) {
+  if (!client->headers_sent) {
+    if (client->out_buffer_len == 0) {
+      build_response_headers(client->out_buffer, MAX_BUFFER_SIZE,
+                             "application/octet-stream", client->file_size);
+      client->out_buffer_len = strlen(client->out_buffer);
+    }
+
+    int headers_status =
+        write_partial(client, client->out_buffer, &client->out_buffer_sent,
+                      client->out_buffer_len);
+    if (headers_status != 0) {
+      return headers_status;
+    }
+    client->headers_sent = true;
+    client->out_buffer_sent = 0;
+  }
+
+  int file_status = send_file_body(client);
+  if (file_status != 0) {
+    return file_status;
+  }
+
+  close(client->file_fd);
+  client->file_fd = -1;
+  client->file_offset = 0;
+  client->file_size = 0;
+  client->headers_sent = false;
+  client->out_buffer_len = 0;
+  return 0;
+}
+
+// main orchestrator function
+int write_client_response(client_t *client) {
+  const char *response_body = "Hello World";
+  const char *content_type = "text/plain";
+
+  // Check if there is a file to be sent.
+  if (client->file_fd > 0) {
+    return send_file_response(client);
+  }
+  // Otherwise, handle a simple body response.
+  else {
+    return send_simple_response(client, response_body, content_type);
+  }
+}
 
 // ##############################################################################
 // ## server process handling
 // ##############################################################################
 
-void run_worker(int *listen_sockets, int num_sockets) {
-  // --- Start epoll setup ---
-  int epoll_fd;
-  struct epoll_event event;
-  struct epoll_event events[MAX_EVENTS];
-  int num_events;
-
-  epoll_fd = epoll_create1(0);
+int setup_epoll(int *listen_sockets, int num_sockets) {
+  int epoll_fd = epoll_create1(0);
   if (epoll_fd == -1) {
     logs('E', "Worker failed to create epoll instance.",
          "run_worker(): epoll_create1() failed.");
@@ -339,6 +463,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
   }
 
   // add the listening sockets to the epoll instance
+  struct epoll_event event;
   for (int i = 0; i < num_sockets; i++) {
     event.events = EPOLLIN;
     event.data.fd = listen_sockets[i];
@@ -349,8 +474,17 @@ void run_worker(int *listen_sockets, int num_sockets) {
       exits();
     }
   }
-  // --- End epoll setup ---
 
+  return epoll_fd;
+}
+
+void run_worker(int *listen_sockets, int num_sockets) {
+  // setup epoll
+  struct epoll_event events[MAX_EVENTS];
+  int num_events;
+  int epoll_fd = setup_epoll(listen_sockets, num_sockets);
+
+  // create client_map
   client_map = g_hash_table_new(g_direct_hash, g_direct_equal);
   if (client_map == NULL) {
     logs('E', "Worker failed to create client_map.",
@@ -402,7 +536,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
 
         } else if (events[i].events & EPOLLOUT) {
           // it's a write event
-          if (write_response(client->fd, "Hello world") == 0) {
+          if (write_client_response(client) == 0) {
             // write returns 0, which means success
             // transition epoll event to EPOLLIN and set state to READING
             transition_state(client, epoll_fd, READING);
@@ -411,7 +545,6 @@ void run_worker(int *listen_sockets, int num_sockets) {
             transition_state(client, epoll_fd, CLOSING);
           }
 
-          // TODO: handle keep-alive
         } else {
           logs('E', "Unexpected event on socket %d", NULL, current_fd);
           close_connection(client, epoll_fd);
