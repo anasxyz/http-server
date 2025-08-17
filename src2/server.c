@@ -83,12 +83,14 @@ typedef struct {
   int file_fd;
   off_t file_offset;
   off_t file_size;
+
+  server_config *parent_server; // pointer to parent server config
 } client_t;
 
 // forward declarations of all functions in this file
 void transition_state(client_t *client, int epoll_fd, state_e new_state);
 int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events);
-int handle_new_connection(int connection_socket, int epoll_fd);
+int handle_new_connection(int connection_socket, int epoll_fd, int *listen_sockets);
 void close_connection(client_t *client, int epoll_fd);
 
 int read_client_request(client_t *client);
@@ -173,7 +175,7 @@ void initialise_client(client_t *client) {
   client->file_size = 0;
 }
 
-int handle_new_connection(int connection_socket, int epoll_fd) {
+int handle_new_connection(int connection_socket, int epoll_fd, int *listen_sockets) {
   struct sockaddr_in client_address;
   socklen_t client_address_len;
   struct epoll_event event;
@@ -208,6 +210,14 @@ int handle_new_connection(int connection_socket, int epoll_fd) {
   // set needed client fields
   client->fd = client_sock;
   client->ip = strdup(inet_ntoa(client_address.sin_addr));
+
+  // find the server config for this connection
+  for (int i = 0; i < global_config->http->num_servers; i++) {
+    if (connection_socket == listen_sockets[i]) {
+      client->parent_server = &global_config->http->servers[i];
+      break;
+    }
+  }
 
   // insert client into global map
   g_hash_table_insert(client_map, GINT_TO_POINTER(client->fd), client);
@@ -276,7 +286,6 @@ int read_client_request(client_t *client) {
       // if error is EAGAIN or EWOULDBLOCK, it means that there is no more data
       // to read right now
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        logs('D', "No more data to read from Client %s", NULL, client->ip);
         return 0;
       } else {
         // a real error occured, so handle it
@@ -299,7 +308,7 @@ int read_client_request(client_t *client) {
     // null terminate for easier parsing late
     client->in_buffer[client->in_buffer_len] = '\0';
 
-    printf("%s", client->in_buffer);
+    // printf("%s", client->in_buffer);
   }
 }
 
@@ -334,8 +343,8 @@ int write_partial(client_t *client, const char *buffer, size_t *offset,
   return 1;
 }
 
-// Sends a file using sendfile().
-// Returns 0 on success, 1 on EAGAIN (partial write), -1 on fatal error.
+// sends a file using sendfile()
+// returns 0 on success, 1 on EAGAIN (partial write), -1 on fatal error
 int send_file_body(client_t *client) {
   if (client->file_offset >= client->file_size) {
     return 0;
@@ -358,18 +367,18 @@ int send_file_body(client_t *client) {
   return 1;
 }
 
-// Builds an HTTP header string into the provided buffer.
+// builds an HTTP header string into the provided buffer
 void build_response_headers(char *buffer, size_t buffer_size,
                             const char *content_type, size_t content_length) {
   const char *template = "HTTP/1.1 200 OK\r\n"
                          "Content-Type: %s\r\n"
                          "Content-Length: %zu\r\n"
-                         "Connection: keep-alive\r\n"
+                         "Connection: close\r\n"
                          "\r\n";
   snprintf(buffer, buffer_size, template, content_type, content_length);
 }
 
-// Handles building and sending a complete response with a small body.
+// handles building and sending a complete response with a small body
 int send_simple_response(client_t *client, const char *body,
                          const char *content_type) {
   size_t body_len = strlen(body);
@@ -402,7 +411,7 @@ int send_simple_response(client_t *client, const char *body,
   return 0;
 }
 
-// Handles sending a file, first the headers, then the file content.
+// handles sending a file, first the headers, then the file content
 int send_file_response(client_t *client) {
   if (!client->headers_sent) {
     if (client->out_buffer_len == 0) {
@@ -440,11 +449,11 @@ int write_client_response(client_t *client) {
   const char *response_body = "Hello World";
   const char *content_type = "text/plain";
 
-  // Check if there is a file to be sent.
+  // check if there is a file to be sent
   if (client->file_fd > 0) {
     return send_file_response(client);
   }
-  // Otherwise, handle a simple body response.
+  // otherwise, handle a simple body response
   else {
     return send_simple_response(client, response_body, content_type);
   }
@@ -517,17 +526,20 @@ void run_worker(int *listen_sockets, int num_sockets) {
 
       if (is_listening_socket) {
         // handle new connection
-        handle_new_connection(current_fd, epoll_fd);
+        handle_new_connection(current_fd, epoll_fd, listen_sockets);
       } else {
         // get client from client map
         client_t *client = (client_t *)g_hash_table_lookup(
             client_map, GINT_TO_POINTER(current_fd));
 
-        if (events[i].events & EPOLLIN) {
+        if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
+          transition_state(client, epoll_fd, CLOSING);
+        } else if (events[i].events & EPOLLIN) {
           // it's a read event
           if (read_client_request(client) == 0) {
             // read returns 0, which means success
             // transition epoll event to EPOLLOUT and set state to WRITING
+            logs('D', "No more data to read from Client %s", NULL, client->ip);
             transition_state(client, epoll_fd, WRITING);
           } else {
             // read returns -1, which means error, so close connection
@@ -539,12 +551,18 @@ void run_worker(int *listen_sockets, int num_sockets) {
           if (write_client_response(client) == 0) {
             // write returns 0, which means success
             // transition epoll event to EPOLLIN and set state to READING
-            transition_state(client, epoll_fd, READING);
+            int keepalive = 0; // obviously would be replaced when we actually
+                               // pase the keep-alive header
+            logs('D', "No more data to write to Client %s", NULL, client->ip);
+            if (keepalive == 1) {
+              transition_state(client, epoll_fd, READING);
+            } else {
+              transition_state(client, epoll_fd, CLOSING);
+            }
           } else {
             // write returns -1, which means error, so close connection
             transition_state(client, epoll_fd, CLOSING);
           }
-
         } else {
           logs('E', "Unexpected event on socket %d", NULL, current_fd);
           close_connection(client, epoll_fd);
@@ -559,7 +577,7 @@ void init_sockets(int *listen_sockets) {
 
   for (int i = 0; i < global_config->http->num_servers; i++) {
     listen_sockets[i] = setup_listening_socket(servers[i].listen_port);
-    logs('I', "%s listening on port %d.", NULL, servers[i].server_name,
+    logs('I', "%s listening on port %d.", NULL, servers[i].server_names[0],
          servers[i].listen_port);
     if (listen_sockets[i] == -1) {
       exits();
@@ -613,23 +631,23 @@ void check_valid_config() {
 
   // --- server config checks ---
   for (int i = 0; i < num_servers; i++) {
-    if (!servers[i].server_name) {
+    if (!servers[i].server_names[0]) {
       char default_name[32];
       snprintf(default_name, sizeof(default_name), "server%d", i + 1);
-      servers[i].server_name = strdup(default_name);
+      servers[i].server_names[0] = strdup(default_name);
       logs('W', "No name configured for server %d. Setting to default: %s",
            NULL, i + 1, default_name);
     }
 
     if (!servers[i].listen_port) {
       logs('E', "No port configured for server %s", NULL,
-           servers[i].server_name);
+           servers[i].server_names[0]);
       exits();
     }
     if (servers[i].listen_port < 1024) {
       logs('E',
            "Invalid port number. Configure a different port for %s (>1024).",
-           NULL, servers[i].server_name);
+           NULL, servers[i].server_names[0]);
       exits();
     }
   }

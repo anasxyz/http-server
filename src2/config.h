@@ -13,7 +13,7 @@ extern config *global_config;
 // represents a single location block within a server block
 typedef struct location_config {
   char *uri;           // could be "/" or "/images" or whatever
-  char *root_dir;      // overrides the default root directory in server block
+  char *content_dir;      // overrides the default root directory in server block
   char **index_files;  // overrides the default index files in server block
   char *proxy_url;     // for reverse proxying
   int autoindex;       // 0 for off, 1 for on
@@ -41,8 +41,8 @@ typedef struct ssl_config {
 // represents a single server block or virtual host
 typedef struct server_config {
   int listen_port;            // port to listen on
-  char *server_name;          // array of server names
-  char *root_dir;             // default root dir for all locations
+  char **server_names;          // array of server names
+  char *content_dir;             // default root dir for all locations
   char **index_files;         // default index files for all locations
   ssl_config *ssl;            // ssl config
   location_config *locations; // array of locations
@@ -52,6 +52,9 @@ typedef struct server_config {
 
   char *access_log_path; // overrides the default access log path in http block
   char *error_log_path;  // overrides the default error log path in http block
+  char *log_format;
+
+  int timeout; // timeout for idle connections in seconds
 } server_config;
 
 typedef struct http_config {
