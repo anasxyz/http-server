@@ -86,5 +86,6 @@ void parse_config();
 long parse_duration_ms(const char *str);
 void load_config();
 void free_config();
+char *trim(char *str);
 
 #endif // _CONFIG_H_

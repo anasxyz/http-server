@@ -44,7 +44,7 @@ typedef struct {
 
 typedef struct {
   request_line_t request_line;
-  header_t *headers;
+  GHashTable *headers;
   size_t num_headers;
   char *body;
   size_t body_len;
@@ -94,6 +94,9 @@ typedef struct {
   off_t file_size;
 
   server_config *parent_server; // pointer to parent server config
+
+  request_t *request;
+  response_t *response;
 } client_t;
 
 // forward declarations of all functions in this file
@@ -223,12 +226,12 @@ int handle_new_connection(int connection_socket, int epoll_fd,
     return -1;
   }
 
-	// if max connections reached, reject connection
-	if (atomic_load(total_connections) >= global_config->max_connections) {
-		logs('W', "Server is full. Rejecting connection.", NULL);
-		close(client_sock); // immediately close socket
-		return 0;
-	}
+  // if max connections reached, reject connection
+  if (atomic_load(total_connections) >= global_config->max_connections) {
+    logs('W', "Server is full. Rejecting connection.", NULL);
+    close(client_sock); // immediately close socket
+    return 0;
+  }
 
   // set client's socket to non-blocking
   set_nonblocking(client_sock);
@@ -278,7 +281,7 @@ int handle_new_connection(int connection_socket, int epoll_fd,
   logs('D', "Transitioned connection %s from NOTHING to READING.", NULL,
        client->ip);
 
-	printf("Total active connections: %d\n", atomic_load(total_connections));
+  printf("Total active connections: %d\n", atomic_load(total_connections));
 
   return 0;
 }
@@ -312,12 +315,114 @@ void close_connection(client_t *client, int epoll_fd, int *active_connections) {
   logs('I', "Total active connections: %d", NULL,
        atomic_load(total_connections));
 
-	printf("Total active connections: %d\n", atomic_load(total_connections));
+  printf("Total active connections: %d\n", atomic_load(total_connections));
 }
 
 // ##############################################################################
 // ## request handling
 // ##############################################################################
+
+void free_request(request_t *request) {
+  if (request == NULL) {
+    return;
+  }
+
+  // Free the dynamically allocated strings for the request line
+  free(request->request_line.method);
+  free(request->request_line.uri);
+  free(request->request_line.version);
+
+  // The GHashTable's destroy function will free its own keys and values
+  if (request->headers != NULL) {
+    g_hash_table_destroy(request->headers);
+  }
+
+  // Free the request body, if it exists
+  free(request->body);
+
+  // Finally, free the request struct itself
+  free(request);
+}
+
+// helper function to find a newline sequence
+char *find_newline(char *buffer, size_t len) {
+  for (size_t i = 0; i < len; ++i) {
+    if (buffer[i] == '\r' && (i + 1) < len && buffer[i + 1] == '\n') {
+      return &buffer[i];
+    }
+  }
+  return NULL;
+}
+int parse_request(char *buffer, size_t buffer_len, request_t *request) {
+  char *current_pos = buffer;
+  char *end_of_line;
+
+  // parse request line
+  end_of_line = find_newline(current_pos, buffer_len - (current_pos - buffer));
+  if (end_of_line == NULL) {
+    return -1; // malformed request line
+  }
+
+  *end_of_line = '\0'; // null terminate request line
+
+  char method[16], uri[256], version[16];
+  if (sscanf(current_pos, "%s %s %s", method, uri, version) != 3) {
+    return -1; // malformed request line
+  }
+
+  request->request_line.method = strdup(method);
+  request->request_line.uri = strdup(uri);
+  request->request_line.version = strdup(version);
+  current_pos = end_of_line + 2;
+
+  // parse headers
+  request->headers =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  if (request->headers == NULL) {
+    return -1; // failed to allocate memory for headers
+  }
+
+  while ((end_of_line =
+              find_newline(current_pos, buffer_len - (current_pos - buffer)))) {
+    *end_of_line = '\0'; // null terminate header line
+
+    // check for end of headers
+    if (strlen(current_pos) == 0) {
+      current_pos = end_of_line + 2;
+      break;
+    }
+
+    char *colon_pos = strchr(current_pos, ':');
+    if (colon_pos == NULL) {
+      return -1; // malformed header
+    }
+
+    *colon_pos = '\0'; // null terminate header name
+    char *key = current_pos;
+    char *value = trim(colon_pos + 1);
+
+    g_hash_table_insert(request->headers, g_strdup(key), g_strdup(value));
+
+    current_pos = end_of_line + 2;
+  }
+
+  // handle body
+  const gchar *content_length_str =
+      g_hash_table_lookup(request->headers, "Content-Length");
+  if (content_length_str) {
+    request->body_len = atoi(content_length_str);
+    if (current_pos + request->body_len <= buffer + buffer_len) {
+      request->body = malloc(request->body_len + 1);
+      memcpy(request->body, current_pos, request->body_len);
+      request->body[request->body_len] = '\0';
+    } else {
+      g_hash_table_destroy(request->headers);
+      return -1; // malformed request
+    }
+  }
+
+  return 0;
+}
 
 int read_client_request(client_t *client) {
   char temp_buffer[MAX_BUFFER_SIZE];
@@ -325,42 +430,67 @@ int read_client_request(client_t *client) {
 
   // keep reading until we get a full request
   while (1) {
-    // read the raw request into temporary buffer
     bytes_read = read(client->fd, temp_buffer, MAX_BUFFER_SIZE);
 
-    // if read() return 0, it means the client closed the connection
     if (bytes_read == 0) {
-      return -1;
+      return -1; // Client closed connection
     }
-
-    // if read() returns -1, it means there's an error
     if (bytes_read == -1) {
-      // if error is EAGAIN or EWOULDBLOCK, it means that there is no more data
-      // to read right now
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        return 0;
-      } else {
-        // a real error occured, so handle it
-        return -1;
+        return 1; // No more data to read for now, so return 1 to not change
+                  // state
       }
+      return -1; // A real error
     }
 
-    // if we got this far, this means that bytes_read > 0
-    // so add the new data to client's in_buffer
-    // check for buffer overflow first before copying data
-    // if new data exceeds fixed size buffer then treat as error
+    // Check for buffer overflow
     if (client->in_buffer_len + bytes_read >= MAX_BUFFER_SIZE) {
       return -1;
     }
 
-    // copy new data from temp buffer into client main buffer
+    // Copy new data to client's buffer
     memcpy(client->in_buffer + client->in_buffer_len, temp_buffer, bytes_read);
     client->in_buffer_len += bytes_read;
-
-    // null terminate for easier parsing late
     client->in_buffer[client->in_buffer_len] = '\0';
 
-    // printf("%s", client->in_buffer);
+    // Check for the end of the headers (\r\n\r\n)
+    char *end_of_headers = strstr(client->in_buffer, "\r\n\r\n");
+    if (end_of_headers) {
+      // Headers are complete. Now check if we have the full body.
+      size_t headers_len = (end_of_headers - client->in_buffer) + 4;
+      size_t body_len = 0;
+
+      // Search for Content-Length header to determine body size
+      char *content_length_header =
+          strstr(client->in_buffer, "Content-Length:");
+      if (content_length_header) {
+        // Parse the Content-Length value
+        char *value_start = content_length_header + strlen("Content-Length:");
+        body_len = (size_t)atoi(value_start);
+      }
+
+      size_t full_request_len = headers_len + body_len;
+
+      // Check if the entire request (headers + body) has been received
+      if (client->in_buffer_len >= full_request_len) {
+        // A complete request is now in the buffer
+        client->request = malloc(sizeof(request_t));
+        if (parse_request(client->in_buffer, client->in_buffer_len,
+                          client->request) == 0) {
+          // Success! The request is parsed.
+          printf("Request line: %s %s %s\n", client->request->request_line.method,
+                 client->request->request_line.uri,
+                 client->request->request_line.version);
+					printf("Connection: %s\n", (const char *)g_hash_table_lookup(client->request->headers, "Connection"));
+          return 0; // Return 0 to trigger state change to WRITING
+        } else {
+          // Parsing failed
+          free_request(client->request);
+          client->request = NULL;
+          return -1;
+        }
+      }
+    }
   }
 }
 
@@ -585,7 +715,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
       if (is_listening_socket) {
         // handle new connection
         if (handle_new_connection(current_fd, epoll_fd, listen_sockets,
-                              &active_connections) == -1) {
+                                  &active_connections) == -1) {
           logs('W', "Server is full. Rejecting connection.", NULL);
         }
       } else {
@@ -737,20 +867,23 @@ void free_client(client_t *client) {
     close(client->file_fd);
   }
 
+  // Free the parsed request data, if it exists
+  free_request(client->request);
+
   // Free the struct itself
   free(client);
 }
 
 void clear_log_file() {
-    FILE *log_file = fopen("logs.log", "w");
-    if (log_file) {
-        fclose(log_file);
-    }
+  FILE *log_file = fopen("logs.log", "w");
+  if (log_file) {
+    fclose(log_file);
+  }
 }
 
 int main() {
-	clear_log_file();
-	
+  clear_log_file();
+
   logs('I', "Starting server...", NULL);
   signal(SIGINT, sigint_handler);
 
