@@ -741,7 +741,16 @@ void free_client(client_t *client) {
   free(client);
 }
 
+void clear_log_file() {
+    FILE *log_file = fopen("logs.log", "w");
+    if (log_file) {
+        fclose(log_file);
+    }
+}
+
 int main() {
+	clear_log_file();
+	
   logs('I', "Starting server...", NULL);
   signal(SIGINT, sigint_handler);
 

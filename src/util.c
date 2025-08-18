@@ -17,23 +17,23 @@
 int logs_enabled = 1;
 int verbose_mode_enabled = 1;
 
-#include <unistd.h> // for getpid()
-
 void logs(char type, const char *fmt, const char *extra_fmt, ...) {
   if (!logs_enabled) {
     return;
   }
 
-  // Determine the log file based on the process ID
   char log_filename[256];
   snprintf(log_filename, sizeof(log_filename), "logs.log");
 
-  // Open the file in append mode. This is crucial for keeping a continuous log.
   FILE *log_file = fopen(log_filename, "a");
   if (!log_file) {
-    // Fallback to stderr if file cannot be opened
     log_file = stderr;
   }
+
+  time_t now = time(NULL);
+  struct tm *t = localtime(&now);
+  char timestamp[32];
+  strftime(timestamp, sizeof(timestamp), "[%Y-%m-%d %H:%M:%S] ", t);
 
   va_list args;
   va_start(args, extra_fmt);
@@ -41,7 +41,9 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
   va_list args_copy;
   va_copy(args_copy, args);
 
-  // Print prefix to the selected file stream
+  // Print timestamp and prefix to the selected file stream
+  fprintf(log_file, "%s", timestamp); // Print the timestamp first
+
   switch (type) {
   case 'E':
     fprintf(log_file, "[ERROR] ");
@@ -60,15 +62,13 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
     va_end(args);
     va_end(args_copy);
     if (log_file != stderr)
-      fclose(log_file); // Close file if opened
+      fclose(log_file);
     return;
   }
 
-  // Print main message
   vfprintf(log_file, fmt, args);
   fprintf(log_file, "\n");
 
-  // Print extra if in verbose mode
   if (extra_fmt && verbose_mode_enabled) {
     fprintf(log_file, "EXTRA: ");
     vfprintf(log_file, extra_fmt, args_copy);
@@ -78,7 +78,6 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
   va_end(args);
   va_end(args_copy);
 
-  // Close the file stream. This flushes the buffer and ensures data is written.
   if (log_file != stderr) {
     fclose(log_file);
   }
