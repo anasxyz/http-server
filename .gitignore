@@ -1,1 +1,5 @@
 server
+cert.pem
+key.pem
+large_file.txt
+.clangd

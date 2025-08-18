@@ -1,302 +1,509 @@
-// config.c (UPDATED)
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
-#include <pthread.h> // for pthread_rwlock_t (if used for config ptr)
-#include <stdarg.h>  // for variadic functions
-#include <time.h>    // for time in logs
-#include <unistd.h>  // for close()
-#include <fcntl.h>   // for open() flags (O_CREAT, O_WRONLY, O_APPEND)
 
-#include "../include/config.h" // Include the updated header
+#include "config.h"
+#include "util.h"
 
-// global pointer to the active configuration
-// use a mutex/read-write lock for thread-safe access if you introduce worker threads later
-static Config *current_config_ptr = NULL;
+#define MAX_LINE_LENGTH 1024
 
-// (rest of trim function is unchanged)
-void trim(char *str) {
+typedef enum { GLOBAL, HTTP, SERVER, LOCATION, SSL } parser_state_e;
+
+config *global_config;
+
+void init_config() {
+  global_config = malloc(sizeof(config));
+  if (global_config == NULL) {
+    logs('E', "Couldn't allocate memory for top-level config.",
+         "init_config() failed.");
+    exit(1);
+  }
+  memset(global_config, 0, sizeof(config));
+
+  global_config->http = malloc(sizeof(http_config));
+  if (global_config->http == NULL) {
+    logs('E', "Couldn't allocate memory for http config.",
+         "init_config() failed.");
+    free(global_config); // Clean up
+    exit(1);
+  }
+  memset(global_config->http, 0, sizeof(http_config));
+}
+
+char *trim(char *str) {
+  while (isspace((unsigned char)*str)) {
+    str++;
+  }
+  if (*str == 0) {
+    return str;
+  }
+
+  char *end = str + strlen(str) - 1;
+  while (end > str && isspace((unsigned char)*end)) {
+    end--;
+  }
+  *(end + 1) = 0;
+
+  return str;
+}
+
+char **parse_string_list(const char *value, int *count) {
+  char *temp_value = strdup(value);
+  if (temp_value == NULL) {
+    *count = 0;
+    return NULL;
+  }
+
+  char **list = NULL;
+  *count = 0;
+  char *token = strtok(temp_value, ",");
+
+  while (token != NULL) {
+    char *name = trim(token);
+    if (*name != '\0') {
+      list = realloc(list, sizeof(char *) * (*count + 1));
+      if (list == NULL) {
+        // handle realloc failure
+        for (int i = 0; i < *count; i++) {
+          free(list[i]);
+        }
+        free(temp_value);
+        *count = 0;
+        return NULL;
+      }
+      list[*count] = strdup(name);
+      (*count)++;
+    }
+    token = strtok(NULL, ",");
+  }
+
+  free(temp_value);
+  return list;
+}
+
+long parse_duration_ms(const char *str) {
+  if (!str || !*str)
+    return -1; // empty string
+
   char *end;
+  long value = strtol(str, &end, 10); // parse the number part
 
-  while (isspace((unsigned char)*str)) str++;
+  if (end == str) {
+    return -1; // no number found
+  }
 
-  end = str + strlen(str) - 1;
-  while (end > str && isspace((unsigned char)*end)) end--;
+  // skip spaces after number
+  while (isspace((unsigned char)*end)) {
+    end++;
+  }
 
-  *(end + 1) = '\0';
+  // check unit
+  if (strncmp(end, "ms", 2) == 0) {
+    return value;
+  } else if (*end == 's' && *(end + 1) == '\0') {
+    return value * 1000;
+  } else if (*end == 'm' && *(end + 1) == '\0') {
+    return value * 60 * 1000;
+  } else if (*end == 'h' && *(end + 1) == '\0') {
+    return value * 60 * 60 * 1000;
+  } else if (*end == '\0') {
+    // default to ms if no unit
+    return value;
+  }
+
+  return -1; // unknown unit
 }
 
-// helper to open log files
-static void open_log_files(Logger *logger) {
-    // close existing fds if they are open (for reload)
-    if (logger->access_log_fd != -1) {
-        close(logger->access_log_fd);
-        logger->access_log_fd = -1;
-    }
-    if (logger->error_log_fd != -1) {
-        close(logger->error_log_fd);
-        logger->error_log_fd = -1;
-    }
+void parse_config() {
+  FILE *file = fopen("server.conf", "r");
+  if (file == NULL) {
+    logs('E', "Couldn't open server.conf.", "parse_config(): fopen() failed.");
+    exits();
+  }
 
-    // open access log
-    if (logger->access_log_path) {
-        logger->access_log_fd = open(logger->access_log_path, O_CREAT | O_WRONLY | O_APPEND, 0644);
-        if (logger->access_log_fd == -1) {
-            perror("failed to open access log file");
-            // continue without access log
-        }
+  char line[MAX_LINE_LENGTH];
+  parser_state_e state = GLOBAL;
+  int num_servers = 0;
+  server_config *current_server = NULL;
+  location_config *current_location = NULL;
+
+  while (fgets(line, MAX_LINE_LENGTH, file) != NULL) {
+    char *colon_pos = strchr(line, ':');
+    char *key = NULL;
+    char *value = NULL;
+
+    if (colon_pos) {
+      *colon_pos = '\0';
+      key = trim(line);
+      value = trim(colon_pos + 1);
     } else {
-        // default to stdout if no path specified, for simple cases
-        logger->access_log_fd = STDOUT_FILENO;
+      key = trim(line);
+      value = "";
     }
 
+    if (key[0] == '\0' || key[0] == '#') {
+      continue;
+    }
 
-    // open error log
-    if (logger->error_log_path) {
-        logger->error_log_fd = open(logger->error_log_path, O_CREAT | O_WRONLY | O_APPEND, 0644);
-        if (logger->error_log_fd == -1) {
-            perror("failed to open error log file");
-            // default to stderr if no path specified
-            logger->error_log_fd = STDERR_FILENO;
+    if (state == GLOBAL) {
+      if (strcmp(key, "worker_processes") == 0) {
+        global_config->worker_processes = atoi(value);
+      } else if (strcmp(key, "user") == 0) {
+        global_config->user = strdup(value);
+      } else if (strcmp(key, "pid_file") == 0) {
+        global_config->pid_file = strdup(value);
+      } else if (strcmp(key, "log_file") == 0) {
+        global_config->log_file = strdup(value);
+      } else if (strcmp(key, "http.new") == 0) {
+        state = HTTP; // we are now in the http block
+        continue;
+      }
+    } else if (state == HTTP) {
+      if (strcmp(key, "mime") == 0) {
+        global_config->http->mime_types_path = strdup(value);
+      } else if (strcmp(key, "default_type") == 0) {
+        global_config->http->default_type = strdup(value);
+      } else if (strcmp(key, "access_log_path") == 0) {
+        global_config->http->access_log_path = strdup(value);
+      } else if (strcmp(key, "error_log_path") == 0) {
+        global_config->http->error_log_path = strdup(value);
+      } else if (strcmp(key, "log_format") == 0) {
+        global_config->http->log_format = strdup(value);
+      } else if (strcmp(key, "server.new") == 0) {
+        // we are now in a server block
+        state = SERVER;
+        // increment the number of servers
+        num_servers++;
+
+        // resize the servers array
+        global_config->http->servers = realloc(
+            global_config->http->servers, sizeof(server_config) * num_servers);
+        if (global_config->http->servers == NULL) {
+          logs('E', "Couldn't allocate memory for servers array.",
+               "parse_config(): realloc() failed.");
+          exits();
         }
-    } else {
-        // default to stderr if no path specified
-        logger->error_log_fd = STDERR_FILENO;
-    }
-}
 
-// helper to close log files
-static void close_log_files(Logger *logger) {
-    // only close if it's not stdout/stderr
-    if (logger->access_log_fd != -1 && logger->access_log_fd != STDOUT_FILENO) {
-        close(logger->access_log_fd);
-    }
-    if (logger->error_log_fd != -1 && logger->error_log_fd != STDERR_FILENO) {
-        close(logger->error_log_fd);
-    }
-    logger->access_log_fd = -1;
-    logger->error_log_fd = -1;
-}
+        // get a pointer to the current server and initialise it
+        current_server = &global_config->http->servers[num_servers - 1];
+        memset(current_server, 0, sizeof(server_config));
 
-
-// function to load config into a provided config struct
-// initializes the struct and populates it. returns 1 on success, 0 on failure.
-int load_config_into_struct(const char *path, Config *cfg) {
-    // initialize the struct members to safe defaults / null
-    cfg->port = 8080;
-    cfg->root = NULL;
-    cfg->index_files = NULL;
-    cfg->index_files_count = 0;
-    cfg->try_files = NULL;
-    cfg->try_files_count = 0;
-    cfg->aliases = NULL;
-    cfg->aliases_count = 0;
-    cfg->proxies = NULL;
-    cfg->proxies_count = 0;
-    // initialize logger paths and fds
-    cfg->logger.access_log_path = NULL;
-    cfg->logger.error_log_path = NULL;
-    cfg->logger.access_log_fd = -1;
-    cfg->logger.error_log_fd = -1;
-
-    FILE *fp = fopen(path, "r");
-    if (!fp) {
-        perror("failed to open config file for reload");
-        return 0; // indicate failure
-    }
-
-    char line[512];
-    while (fgets(line, sizeof(line), fp)) {
-        trim(line);
-        if (line[0] == '#' || strlen(line) == 0)
-            continue;
-
-        char *key = strtok(line, " ");
-        if (!key) continue;
-
-        if (strcmp(key, "port") == 0) {
-            char *val = strtok(NULL, " ");
-            if (val) cfg->port = atoi(val);
-        } else if (strcmp(key, "root") == 0) {
-            char *val = strtok(NULL, " ");
-            if (val) cfg->root = strdup(val);
-        } else if (strcmp(key, "index") == 0) {
-            char *val;
-            while ((val = strtok(NULL, " "))) {
-                cfg->index_files = realloc(cfg->index_files, sizeof(char *) * (cfg->index_files_count + 1));
-                if (!cfg->index_files) { perror("realloc index_files"); fclose(fp); return 0; }
-                cfg->index_files[cfg->index_files_count++] = strdup(val);
-            }
-        } else if (strcmp(key, "try_files") == 0) {
-            char *val;
-            while ((val = strtok(NULL, " "))) {
-                cfg->try_files = realloc(cfg->try_files, sizeof(char *) * (cfg->try_files_count + 1));
-                if (!cfg->try_files) { perror("realloc try_files"); fclose(fp); return 0; }
-                cfg->try_files[cfg->try_files_count++] = strdup(val);
-            }
-        } else if (strcmp(key, "alias") == 0) {
-            char *from = strtok(NULL, " ");
-            char *to = strtok(NULL, " ");
-            if (from && to) {
-                cfg->aliases = realloc(cfg->aliases, sizeof(Alias) * (cfg->aliases_count + 1));
-                if (!cfg->aliases) { perror("realloc aliases"); fclose(fp); return 0; }
-                cfg->aliases[cfg->aliases_count].from = strdup(from);
-                cfg->aliases[cfg->aliases_count].to = strdup(to);
-                cfg->aliases_count++;
-            }
-        } else if (strcmp(key, "proxy") == 0) {
-            char *from = strtok(NULL, " ");
-            char *to = strtok(NULL, " ");
-            if (from && to) {
-                cfg->proxies = realloc(cfg->proxies, sizeof(Proxy) * (cfg->proxies_count + 1));
-                if (!cfg->proxies) { perror("realloc proxies"); fclose(fp); return 0; }
-                cfg->proxies[cfg->proxies_count].from = strdup(from);
-                cfg->proxies[cfg->proxies_count].to = strdup(to);
-                cfg->proxies_count++;
-            }
-        } else if (strcmp(key, "access_log") == 0) { // new config option for access log
-            char *val = strtok(NULL, " ");
-            if (val) cfg->logger.access_log_path = strdup(val);
-        } else if (strcmp(key, "error_log") == 0) { // new config option for error log
-            char *val = strtok(NULL, " ");
-            if (val) cfg->logger.error_log_path = strdup(val);
+        continue;
+      } else if (strcmp(key, "http.end") == 0) {
+        state = GLOBAL;
+        continue;
+      }
+    } else if (state == SERVER) {
+      if (strcmp(key, "listen_port") == 0) {
+        current_server->listen_port = atoi(value);
+      } else if (strcmp(key, "server_name") == 0) {
+        current_server->server_names =
+            parse_string_list(value, &current_server->num_server_names);
+        if (current_server->server_names == NULL &&
+            current_server->num_server_names != 0) {
+          logs('E', "Couldn't allocate memory for server names.",
+               "parse_config() failed.");
+          exits();
         }
+      } else if (strcmp(key, "content_dir") == 0) {
+        current_server->content_dir = strdup(value);
+      } else if (strcmp(key, "index_files") == 0) {
+        current_server->index_files =
+            parse_string_list(value, &current_server->num_index_files);
+        if (current_server->index_files == NULL &&
+            current_server->num_index_files != 0) {
+          logs('E', "Couldn't allocate memory for index files.",
+               "parse_config() failed.");
+          exits();
+        }
+      } else if (strcmp(key, "access_log_path") == 0) {
+        current_server->access_log_path = strdup(value);
+      } else if (strcmp(key, "error_log_path") == 0) {
+        current_server->error_log_path = strdup(value);
+      } else if (strcmp(key, "log_format") == 0) {
+        current_server->log_format = strdup(value);
+      } else if (strcmp(key, "timeout") == 0) {
+        current_server->timeout = parse_duration_ms(value);
+      } else if (strcmp(key, "ssl.new") == 0) {
+        // we are now in a ssl block
+        state = SSL;
+
+        current_server->ssl = malloc(sizeof(ssl_config));
+        if (current_server->ssl == NULL) {
+          logs('E', "Couldn't allocate memory for ssl config.",
+               "parse_config() failed.");
+          exits();
+        }
+        memset(current_server->ssl, 0, sizeof(ssl_config));
+
+        continue;
+      } else if (strcmp(key, "location.new") == 0) {
+        // we are now in a location block
+        state = LOCATION;
+        // increment the number of locations
+        current_server->num_locations++;
+
+        // resize the locations array
+        current_server->locations =
+            realloc(current_server->locations,
+                    sizeof(location_config) * current_server->num_locations);
+        if (current_server->locations == NULL) {
+          logs('E', "Couldn't allocate memory for locations array.",
+               "parse_config(): realloc() failed.");
+          exits();
+        }
+
+        // get a pointer to the current location and initialise it
+        current_location =
+            &current_server->locations[current_server->num_locations - 1];
+        memset(current_location, 0, sizeof(location_config));
+
+        continue;
+      } else if (strcmp(key, "server.end") == 0) {
+        state = HTTP;
+        continue;
+      }
+    } else if (state == SSL) {
+      if (strcmp(key, "cert_file") == 0) {
+        current_server->ssl->cert_file = strdup(value);
+      } else if (strcmp(key, "key_file") == 0) {
+        current_server->ssl->key_file = strdup(value);
+      } else if (strcmp(key, "protocols") == 0) {
+        current_server->ssl->protocols =
+            parse_string_list(value, &current_server->ssl->num_protocols);
+        if (current_server->ssl->protocols == NULL &&
+            current_server->ssl->num_protocols != 0) {
+          logs('E', "Couldn't allocate memory for ssl protocols.",
+               "parse_config() failed.");
+          exits();
+        }
+      } else if (strcmp(key, "ciphers") == 0) {
+        current_server->ssl->ciphers =
+            parse_string_list(value, &current_server->ssl->num_ciphers);
+        if (current_server->ssl->ciphers == NULL &&
+            current_server->ssl->num_ciphers != 0) {
+          logs('E', "Couldn't allocate memory for ssl ciphers.",
+               "parse_config() failed.");
+          exits();
+        }
+      } else if (strcmp(key, "ssl.end") == 0) {
+        state = SERVER;
+        continue;
+      }
+    } else if (state == LOCATION) {
+      if (strcmp(key, "uri") == 0) {
+        current_location->uri = strdup(value);
+      } else if (strcmp(key, "content_dir") == 0) {
+        current_location->content_dir = strdup(value);
+      } else if (strcmp(key, "index_files") == 0) {
+        current_location->index_files =
+            parse_string_list(value, &current_location->num_index_files);
+        if (current_location->index_files == NULL &&
+            current_location->num_index_files != 0) {
+          logs('E', "Couldn't allocate memory for index files.",
+               "parse_config() failed.");
+          exits();
+        }
+      } else if (strcmp(key, "proxy_url") == 0) {
+        current_location->proxy_url = strdup(value);
+      } else if (strcmp(key, "autoindex") == 0) {
+        current_location->autoindex = (strcmp(value, "on") == 0);
+      } else if (strcmp(key, "allowed_ips") == 0) {
+        // TODO: handle CIDR notation
+        // TODO: maybe read it from a file?
+        current_location->allowed_ips =
+            parse_string_list(value, &current_location->num_allowed_ips);
+        if (current_location->allowed_ips == NULL &&
+            current_location->num_allowed_ips != 0) {
+          logs('E', "Couldn't allocate memory for allowed ips.",
+               "parse_config() failed.");
+          exits();
+        }
+      } else if (strcmp(key, "denied_ips") == 0) {
+        // TODO: handle CIDR notation
+        // TODO: maybe read it from a file?
+        current_location->denied_ips =
+            parse_string_list(value, &current_location->num_denied_ips);
+        if (current_location->denied_ips == NULL &&
+            current_location->num_denied_ips != 0) {
+          logs('E', "Couldn't allocate memory for denied ips.",
+               "parse_config() failed.");
+          exits();
+        }
+      } else if (strcmp(key, "return_status") == 0) {
+        current_location->return_status = atoi(value);
+      } else if (strcmp(key, "return_url_text") == 0) {
+        current_location->return_url_text = strdup(value);
+      } else if (strcmp(key, "etag_header") == 0) {
+        current_location->etag_header = strdup(value);
+      } else if (strcmp(key, "expires_header") == 0) {
+        current_location->expires_header = strdup(value);
+      } else if (strcmp(key, "location.end") == 0) {
+        state = SERVER;
+        continue;
+      }
     }
+  }
 
-    fclose(fp);
-
-    // open log files after parsing config
-    open_log_files(&cfg->logger);
-
-    // print final parsed config for debugging (for the new config)
-    printf("----- parsed config (%s)-----\n", path);
-    printf("port: %d\n", cfg->port);
-    printf("root: %s\n", cfg->root ? cfg->root : "(none)");
-
-    printf("index files:\n");
-    for (size_t i = 0; i < cfg->index_files_count; i++)
-        printf("  - %s\n", cfg->index_files[i]);
-
-    printf("try files:\n");
-    for (size_t i = 0; i < cfg->try_files_count; i++)
-        printf("  - %s\n", cfg->try_files[i]);
-
-    printf("aliases:\n");
-    for (size_t i = 0; i < cfg->aliases_count; i++)
-        printf("  - %s => %s\n", cfg->aliases[i].from, cfg->aliases[i].to);
-
-    printf("proxies:\n");
-    for (size_t i = 0; i < cfg->proxies_count; i++)
-        printf("  - %s => %s\n", cfg->proxies[i].from, cfg->proxies[i].to);
-
-    printf("access log: %s (fd: %d)\n", cfg->logger.access_log_path ? cfg->logger.access_log_path : "(stdout)", cfg->logger.access_log_fd);
-    printf("error log: %s (fd: %d)\n", cfg->logger.error_log_path ? cfg->logger.error_log_path : "(stderr)", cfg->logger.error_log_fd);
-
-    printf("-------------------------\n");
-
-    return 1; // indicate success
+  global_config->http->num_servers = num_servers;
+  fclose(file);
 }
 
-// function to free memory associated with a config struct
-void free_config_struct(Config *cfg) {
-    if (!cfg) return;
+void load_config() {
+  init_config();
+  parse_config();
+}
 
-    for (size_t i = 0; i < cfg->index_files_count; i++)
-        free(cfg->index_files[i]);
-    free(cfg->index_files);
+void free_config() {
+  if (global_config == NULL) {
+    return;
+  }
 
-    for (size_t i = 0; i < cfg->try_files_count; i++)
-        free(cfg->try_files[i]);
-    free(cfg->try_files);
+  // Free global configuration strings
+  if (global_config->user)
+    free(global_config->user);
+  if (global_config->pid_file)
+    free(global_config->pid_file);
+  if (global_config->log_file)
+    free(global_config->log_file);
 
-    for (size_t i = 0; i < cfg->aliases_count; i++) {
-        free(cfg->aliases[i].from);
-        free(cfg->aliases[i].to);
+  // Free http configuration and its contents
+  if (global_config->http != NULL) {
+    if (global_config->http->mime_types_path)
+      free(global_config->http->mime_types_path);
+    if (global_config->http->default_type)
+      free(global_config->http->default_type);
+    if (global_config->http->access_log_path)
+      free(global_config->http->access_log_path);
+    if (global_config->http->error_log_path)
+      free(global_config->http->error_log_path);
+    if (global_config->http->log_format)
+      free(global_config->http->log_format);
+
+    // Free each server configuration and its contents
+    if (global_config->http->servers) {
+      for (int i = 0; i < global_config->http->num_servers; i++) {
+        server_config *server = &global_config->http->servers[i];
+
+        // Free server-specific strings and string lists
+        if (server->content_dir)
+          free(server->content_dir);
+        if (server->access_log_path)
+          free(server->access_log_path);
+        if (server->error_log_path)
+          free(server->error_log_path);
+        if (server->log_format)
+          free(server->log_format);
+
+        // Free server names string list
+        if (server->server_names) {
+          for (int j = 0; j < server->num_server_names; j++) {
+            if (server->server_names[j]) {
+              free(server->server_names[j]);
+            }
+          }
+          free(server->server_names);
+        }
+
+        // Free index files string list
+        if (server->index_files) {
+          for (int j = 0; j < server->num_index_files; j++) {
+            if (server->index_files[j]) {
+              free(server->index_files[j]);
+            }
+          }
+          free(server->index_files);
+        }
+
+        // Free SSL configuration if it exists
+        if (server->ssl != NULL) {
+          if (server->ssl->cert_file)
+            free(server->ssl->cert_file);
+          if (server->ssl->key_file)
+            free(server->ssl->key_file);
+
+          // Free SSL protocols string list
+          if (server->ssl->protocols) {
+            for (int j = 0; j < server->ssl->num_protocols; j++) {
+              if (server->ssl->protocols[j]) {
+                free(server->ssl->protocols[j]);
+              }
+            }
+            free(server->ssl->protocols);
+          }
+
+          // Free SSL ciphers string list
+          if (server->ssl->ciphers) {
+            for (int j = 0; j < server->ssl->num_ciphers; j++) {
+              if (server->ssl->ciphers[j]) {
+                free(server->ssl->ciphers[j]);
+              }
+            }
+            free(server->ssl->ciphers);
+          }
+
+          free(server->ssl);
+        }
+
+        // Free each location configuration and its contents
+        if (server->locations) {
+          for (int j = 0; j < server->num_locations; j++) {
+            location_config *location = &server->locations[j];
+
+            // Free location-specific strings and string lists
+            if (location->uri)
+              free(location->uri);
+            if (location->content_dir)
+              free(location->content_dir);
+            if (location->proxy_url)
+              free(location->proxy_url);
+            if (location->return_url_text)
+              free(location->return_url_text);
+            if (location->etag_header)
+              free(location->etag_header);
+            if (location->expires_header)
+              free(location->expires_header);
+
+            // Free index files string list
+            if (location->index_files) {
+              for (int k = 0; k < location->num_index_files; k++) {
+                if (location->index_files[k]) {
+                  free(location->index_files[k]);
+                }
+              }
+              free(location->index_files);
+            }
+
+            // Free allowed IPs string list
+            if (location->allowed_ips) {
+              for (int k = 0; k < location->num_allowed_ips; k++) {
+                if (location->allowed_ips[k]) {
+                  free(location->allowed_ips[k]);
+                }
+              }
+              free(location->allowed_ips);
+            }
+
+            // Free denied IPs string list
+            if (location->denied_ips) {
+              for (int k = 0; k < location->num_denied_ips; k++) {
+                if (location->denied_ips[k]) {
+                  free(location->denied_ips[k]);
+                }
+              }
+              free(location->denied_ips);
+            }
+          }
+          free(server->locations);
+        }
+      }
+      free(global_config->http->servers);
     }
-    free(cfg->aliases);
+    free(global_config->http);
+  }
 
-    for (size_t i = 0; i < cfg->proxies_count; i++) {
-        free(cfg->proxies[i].from);
-        free(cfg->proxies[i].to);
-    }
-    free(cfg->proxies);
-
-    free(cfg->root);
-    free(cfg->logger.access_log_path); // free log paths
-    free(cfg->logger.error_log_path);
-
-    close_log_files(&cfg->logger); // close log file descriptors
-
-    free(cfg); // free the config struct itself
-}
-
-// functions to get/set the globally active configuration
-Config *get_current_config() {
-    return current_config_ptr;
-}
-
-void set_current_config(Config *new_config) {
-    // when setting a new config, ensure the old one's log fds are closed
-    // before the old config struct itself is freed in main.c
-    // free_global_config() handles this now
-    current_config_ptr = new_config;
-}
-
-// function to free the currently active global config
-void free_global_config() {
-    if (current_config_ptr) {
-        free_config_struct(current_config_ptr); // this will also close fds
-    }
-    current_config_ptr = NULL; // prevent double free
-}
-
-
-// new: logging functions
-
-// get current time in a format suitable for logs
-static char* get_log_time() {
-    time_t now = time(NULL);
-    struct tm *tm = localtime(&now); // use localtime for local timezone in logs
-    static char time_buf[64]; // static buffer for simplicity, not thread-safe if called concurrently
-    strftime(time_buf, sizeof(time_buf), "[%d/%b/%Y:%H:%M:%S %z]", tm);
-    return time_buf;
-}
-
-void log_access(const char *format, ...) {
-    Config *cfg = get_current_config();
-    if (!cfg || cfg->logger.access_log_fd == -1) {
-        return; // cannot log if config or fd is not set
-    }
-
-    char time_str[64];
-    strftime(time_str, sizeof(time_str), "%d/%b/%Y:%H:%M:%S %z", localtime(&(time_t){time(NULL)}));
-
-    dprintf(cfg->logger.access_log_fd, "%s - - ", get_log_time()); // common log format start
-
-    va_list args;
-    va_start(args, format);
-    vdprintf(cfg->logger.access_log_fd, format, args);
-    va_end(args);
-
-    dprintf(cfg->logger.access_log_fd, "\n"); // newline for each log entry
-}
-
-void log_error(const char *format, ...) {
-    Config *cfg = get_current_config();
-    if (!cfg || cfg->logger.error_log_fd == -1) {
-        return; // cannot log if config or fd is not set
-    }
-
-    char time_str[64];
-    strftime(time_str, sizeof(time_str), "%d/%b/%Y:%H:%M:%S %z", localtime(&(time_t){time(NULL)}));
-
-    dprintf(cfg->logger.error_log_fd, "%s [error] ", get_log_time());
-
-    va_list args;
-    va_start(args, format);
-    vdprintf(cfg->logger.error_log_fd, format, args);
-    va_end(args);
-
-    dprintf(cfg->logger.error_log_fd, "\n"); // newline for each log entry
+  // Finally, free the main config struct
+  free(global_config);
+  global_config = NULL; // Prevent double-free
 }
