@@ -85,11 +85,4 @@ void parse_config();
 void load_config();
 void free_config();
 
-// Forward declarations
-void print_string_list(const char *label, char **list, int count);
-void print_location_config(location_config *location);
-void print_ssl_config(ssl_config *ssl);
-void print_server_config(server_config *server);
-void print_http_config(http_config *http);
-
 #endif // _CONFIG_H_

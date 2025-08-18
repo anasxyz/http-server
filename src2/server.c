@@ -660,9 +660,7 @@ int main() {
 
 	// load config
 	load_config();
-
-	print_http_config(global_config->http);
-
+	
   /*
 // check if config is valid
 check_valid_config();
