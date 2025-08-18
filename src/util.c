@@ -32,19 +32,19 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
   // print prefix
   switch (type) {
   case 'E':
-    fprintf(stderr, "ERROR: ");
+    fprintf(stderr, "[ERROR] ");
     break;
   case 'W':
-    fprintf(stderr, "WARNING: ");
+    fprintf(stderr, "[WARN] ");
     break;
   case 'I':
-    fprintf(stderr, "INFO: ");
+    fprintf(stderr, "[INFO] ");
     break;
   case 'D':
-    fprintf(stderr, "DEBUG: ");
+    fprintf(stderr, "[DEBUG] ");
     break;
   default:
-    fprintf(stderr, "ERROR: Invalid log type: %c\n", type);
+    fprintf(stderr, "[ERROR] Invalid log type: %c\n", type);
     va_end(args);
     va_end(args_copy);
     return;

@@ -113,32 +113,45 @@ void free_client(client_t *client);
 // ## state transitions
 // ##############################################################################
 
+const char *state_to_string(state_e state) {
+  switch (state) {
+  case READING:
+    return "READING";
+  case WRITING:
+    return "WRITING";
+  case CLOSING:
+    return "CLOSING";
+  default:
+    return "UNKNOWN";
+  }
+}
+
 void transition_state(client_t *client, int epoll_fd, state_e new_state) {
   state_e current_state = client->state;
-  struct epoll_event event;
 
-  switch (current_state) {
-  case READING:
+  // Check if the state is already the new state
+  if (current_state == new_state) {
+    return;
+  }
+
+  // Handle epoll modifications based on the transition
+  if (current_state == READING && new_state == WRITING) {
     if (set_epoll(epoll_fd, client, EPOLLOUT) == -1) {
-      break;
+      return;
     }
-    client->state = new_state;
-    logs('D', "Transitioned connection %s from READING to WRITING.", NULL,
-         client->ip);
-
-    break;
-  case WRITING:
+  } else if (current_state == WRITING && new_state == READING) {
     if (set_epoll(epoll_fd, client, EPOLLIN) == -1) {
-      break;
+      return;
     }
-    client->state = new_state;
-    logs('D', "Transitioned connection %s from WRITING to READING.", NULL,
-         client->ip);
-    break;
-  case CLOSING:
-    logs('D', "Transitioned connection %s to CLOSING.", NULL, client->ip);
+  }
+
+  client->state = new_state;
+
+  logs('D', "Transitioned connection %s from %s to %s.", NULL, client->ip,
+       state_to_string(current_state), state_to_string(new_state));
+
+  if (new_state == CLOSING) {
     close_connection(client, epoll_fd);
-    break;
   }
 }
 
@@ -384,7 +397,7 @@ void build_response_headers(char *buffer, size_t buffer_size,
   const char *template = "HTTP/1.1 200 OK\r\n"
                          "Content-Type: %s\r\n"
                          "Content-Length: %zu\r\n"
-                         "Connection: close\r\n"
+                         "Connection: keep-alive\r\n"
                          "\r\n";
   snprintf(buffer, buffer_size, template, content_type, content_length);
 }
@@ -517,6 +530,9 @@ void run_worker(int *listen_sockets, int num_sockets) {
     num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
     if (num_events == -1) {
       if (errno == EINTR) {
+        if (shutdown_flag == 1) {
+          break;
+        }
         continue;
       }
       logs('E', "Worker's epoll_wait failed.",
@@ -563,7 +579,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
           if (write_client_response(client) == 0) {
             // write returns 0, which means success
             // transition epoll event to EPOLLIN and set state to READING
-            int keepalive = 0; // obviously would be replaced when we actually
+            int keepalive = 1; // obviously would be replaced when we actually
                                // pase the keep-alive header
             logs('D', "No more data to write to Client %s", NULL, client->ip);
             if (keepalive == 1) {
@@ -711,7 +727,7 @@ int main() {
 
   // TODO: free_config here when it's implemented
   atexit(free_config);
-	logs('I', "Server exiting.", NULL);
+  logs('I', "Server exiting.", NULL);
 
   return 0;
 }
