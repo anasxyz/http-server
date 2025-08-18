@@ -147,7 +147,9 @@ void parse_config() {
     }
 
     if (state == GLOBAL) {
-      if (strcmp(key, "worker_processes") == 0) {
+			if (strcmp(key, "max_connections") == 0) {
+				global_config->max_connections = atoi(value);
+			} else if (strcmp(key, "worker_processes") == 0) {
         global_config->worker_processes = atoi(value);
       } else if (strcmp(key, "user") == 0) {
         global_config->user = strdup(value);
@@ -170,7 +172,7 @@ void parse_config() {
         global_config->http->error_log_path = strdup(value);
       } else if (strcmp(key, "log_format") == 0) {
         global_config->http->log_format = strdup(value);
-      } else if (strcmp(key, "server.new") == 0) {
+      } else if (strcmp(key, "host.new") == 0) {
         // we are now in a server block
         state = SERVER;
         // increment the number of servers
@@ -238,7 +240,7 @@ void parse_config() {
         memset(current_server->ssl, 0, sizeof(ssl_config));
 
         continue;
-      } else if (strcmp(key, "location.new") == 0) {
+      } else if (strcmp(key, "route.new") == 0) {
         // we are now in a location block
         state = LOCATION;
         // increment the number of locations
@@ -260,7 +262,7 @@ void parse_config() {
         memset(current_location, 0, sizeof(location_config));
 
         continue;
-      } else if (strcmp(key, "server.end") == 0) {
+      } else if (strcmp(key, "host.end") == 0) {
         state = HTTP;
         continue;
       }
@@ -339,7 +341,7 @@ void parse_config() {
         current_location->etag_header = strdup(value);
       } else if (strcmp(key, "expires_header") == 0) {
         current_location->expires_header = strdup(value);
-      } else if (strcmp(key, "location.end") == 0) {
+      } else if (strcmp(key, "route.end") == 0) {
         state = SERVER;
         continue;
       }

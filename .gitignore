@@ -4,3 +4,4 @@ key.pem
 large_file.txt
 .clangd
 test_command.txt
+logs.log

@@ -224,7 +224,7 @@ int handle_new_connection(int connection_socket, int epoll_fd,
   }
 
 	// if max connections reached, reject connection
-	if (atomic_load(total_connections) >= 1) {
+	if (atomic_load(total_connections) >= global_config->max_connections) {
 		logs('W', "Server is full. Rejecting connection.", NULL);
 		close(client_sock); // immediately close socket
 		return 0;

@@ -26,7 +26,7 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
 
   // Determine the log file based on the process ID
   char log_filename[256];
-  snprintf(log_filename, sizeof(log_filename), "worker_%d.log", getpid());
+  snprintf(log_filename, sizeof(log_filename), "logs.log");
 
   // Open the file in append mode. This is crucial for keeping a continuous log.
   FILE *log_file = fopen(log_filename, "a");

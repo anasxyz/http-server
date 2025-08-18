@@ -73,6 +73,7 @@ typedef struct http_config {
 
 // top-level config struct for entire configuration
 typedef struct config {
+	int max_connections;
   int worker_processes;
   char *user;
   char *pid_file;
