@@ -15,6 +15,7 @@ typedef struct location_config {
   char *uri;           // could be "/" or "/images" or whatever
   char *content_dir;      // overrides the default root directory in server block
   char **index_files;  // overrides the default index files in server block
+	int num_index_files;  // number of index files
   char *proxy_url;     // for reverse proxying
   int autoindex;       // 0 for off, 1 for on
   char **allowed_ips;  // array of allowed ips
@@ -81,6 +82,14 @@ typedef struct config {
 
 void init_config();
 void parse_config();
+void load_config();
 void free_config();
+
+// Forward declarations
+void print_string_list(const char *label, char **list, int count);
+void print_location_config(location_config *location);
+void print_ssl_config(ssl_config *ssl);
+void print_server_config(server_config *server);
+void print_http_config(http_config *http);
 
 #endif // _CONFIG_H_

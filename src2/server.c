@@ -658,11 +658,10 @@ void check_valid_config() {
 int main() {
   logs('I', "Starting server...", NULL);
 
-  // init config
-  init_config();
+	// load config
+	load_config();
 
-  // TODO: parse config (leave for now)
-  parse_config();
+	print_http_config(global_config->http);
 
   /*
 // check if config is valid
