@@ -42,8 +42,10 @@ typedef struct ssl_config {
 typedef struct server_config {
   int listen_port;            // port to listen on
   char **server_names;          // array of server names
+	int num_server_names;          // number of server names
   char *content_dir;             // default root dir for all locations
   char **index_files;         // default index files for all locations
+	int num_index_files;         // number of index files
   ssl_config *ssl;            // ssl config
   location_config *locations; // array of locations
   int num_locations;          // number of locations
@@ -54,7 +56,7 @@ typedef struct server_config {
   char *error_log_path;  // overrides the default error log path in http block
   char *log_format;
 
-  int timeout; // timeout for idle connections in seconds
+  long timeout; // timeout for idle connections in seconds
 } server_config;
 
 typedef struct http_config {

@@ -90,7 +90,8 @@ typedef struct {
 // forward declarations of all functions in this file
 void transition_state(client_t *client, int epoll_fd, state_e new_state);
 int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events);
-int handle_new_connection(int connection_socket, int epoll_fd, int *listen_sockets);
+int handle_new_connection(int connection_socket, int epoll_fd,
+                          int *listen_sockets);
 void close_connection(client_t *client, int epoll_fd);
 
 int read_client_request(client_t *client);
@@ -175,7 +176,8 @@ void initialise_client(client_t *client) {
   client->file_size = 0;
 }
 
-int handle_new_connection(int connection_socket, int epoll_fd, int *listen_sockets) {
+int handle_new_connection(int connection_socket, int epoll_fd,
+                          int *listen_sockets) {
   struct sockaddr_in client_address;
   socklen_t client_address_len;
   struct epoll_event event;
@@ -660,23 +662,24 @@ int main() {
   init_config();
 
   // TODO: parse config (leave for now)
-  // parse_config();
+  parse_config();
 
-  // check if config is valid
-  check_valid_config();
+  /*
+// check if config is valid
+check_valid_config();
 
-  // setup listening sockets
-  int listen_sockets[global_config->http->num_servers];
+// setup listening sockets
+int listen_sockets[global_config->http->num_servers];
 
-  // fill socket array with server block sockets
-  init_sockets(listen_sockets);
+// fill socket array with server block sockets
+init_sockets(listen_sockets);
 
-  // fork worker processes
-  fork_workers(listen_sockets);
+// fork worker processes
+fork_workers(listen_sockets);
 
-  // clean up server resources
-  server_cleanup(listen_sockets);
-
+// clean up server resources
+server_cleanup(listen_sockets);
+*/
   // TODO: free_config here when it's implemented
   // free_config();
 
