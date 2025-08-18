@@ -661,6 +661,9 @@ int main() {
 	// load config
 	load_config();
 	
+	printf("%ld", parse_duration_ms("10s"));
+	printf("%ld", global_config->http->servers[0].timeout);
+
   /*
 // check if config is valid
 check_valid_config();

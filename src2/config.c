@@ -358,4 +358,3 @@ void load_config() {
 void free_config() {
   // TODO: implement
 }
-
