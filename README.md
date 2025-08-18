@@ -7,18 +7,17 @@
 > ⚠️ This is an educational project.
 
 ## Features
-- ✅ Completely memory safe with no memory leaks.
-- ✅ Event-driven architecture.
-- ✅ Non-blocking I/O.
+- ✅ Completely memory safe.
+- ✅ Event-driven architecture with non-blocking I/O.
 - ✅ Support for keep-alive connections.
-- ✅ Support for HTTPS/TLS encryption.
 - ✅ Basic Logging and monitoring with customisable access and error logs.
+- ✅ Easy to use compact configuration system with flexible syntax.
 
 ---
 
+- ❌ Support for HTTPS/TLS encryption.
 - ❌ Implementation of the HTTP protocol with request parsing and response generation.
 - ❌ Fast and efficient zero-copy static file serving with full MIME type support and directory indexing.
-- ❌ Easy to use compact configuration system with flexible syntax.
 - ❌ Routing engine supporting URL rewriting and redirection, fallback files, and aliasing.
 - ❌ Reverse proxying to upstream backend servers.  
 - ❌ Advanced configuration support for environment variables and dynamic reloads without downtime.

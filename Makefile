@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -Werror -g
+CFLAGS = 
 
 # Glib flags
 PKG_CFLAGS = $(shell pkg-config --cflags glib-2.0)
@@ -18,3 +18,5 @@ $(TARGET): $(SRC)
 
 clean:
 	rm -f $(TARGET)
+
+
