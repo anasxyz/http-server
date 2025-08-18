@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <atomic_ops.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <glib.h>
@@ -25,6 +26,8 @@ GHashTable *client_map;
 volatile sig_atomic_t shutdown_flag = 0;
 
 void sigint_handler(int signum) { shutdown_flag = 1; }
+
+AO_t active_connections = 0;
 
 typedef struct {
   char *key;
@@ -254,8 +257,13 @@ int handle_new_connection(int connection_socket, int epoll_fd,
     return -1;
   }
 
-  logs('I', "Accepted connection %s (socket %d).", NULL, client->ip,
-       client->fd);
+  AO_fetch_and_add1(&active_connections);
+
+  logs('I', "Accepted connection %s (socket %d) on server %s:%d", NULL,
+       client->ip, client->fd, client->parent_server->server_names[0],
+       client->parent_server->listen_port);
+
+	logs('I', "Active connections: %lu", NULL, (unsigned long)active_connections);
 
   logs('D', "Transitioned connection %s from NOTHING to READING.", NULL,
        client->ip);
@@ -267,9 +275,6 @@ void close_connection(client_t *client, int epoll_fd) {
   if (client == NULL) {
     return;
   }
-
-  logs('I', "Closing connection for client %s (socket %d)", NULL, client->ip,
-       client->fd);
 
   // remove the file descriptor from the epoll instance
   if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client->fd, NULL) == -1 &&
@@ -285,6 +290,13 @@ void close_connection(client_t *client, int epoll_fd) {
   // GDestroyNotify, which will call free_client(),
   // thereby freeing the client_t struct and its contents
   g_hash_table_remove(client_map, GINT_TO_POINTER(client->fd));
+
+  AO_fetch_and_sub1(&active_connections);
+
+  logs('I', "Closing connection for client %s (socket %d)", NULL, client->ip,
+       client->fd);
+	logs('I', "Active connections: %lu", NULL, (unsigned long)active_connections);
+
 }
 
 // ##############################################################################
@@ -707,25 +719,25 @@ int main() {
   logs('I', "Starting server...", NULL);
   signal(SIGINT, sigint_handler);
 
-  // load config
+  // 1. load config
   load_config();
 
-  // check if config is valid
+  // 2. check if config is valid
   check_valid_config();
 
-  // setup listening sockets
+  // 3. setup listening sockets
   int listen_sockets[global_config->http->num_servers];
 
-  // fill socket array with server block sockets
+  // 4. fill socket array with server block sockets
   init_sockets(listen_sockets);
 
-  // fork worker processes
+  // 5. fork worker processes
   fork_workers(listen_sockets);
 
-  // clean up server resources
+  // 6. clean up server resources
   server_cleanup(listen_sockets);
 
-  // TODO: free_config here when it's implemented
+  // 7. free_config at exit for master process
   atexit(free_config);
   logs('I', "Server exiting.", NULL);
 
