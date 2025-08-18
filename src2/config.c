@@ -356,5 +356,154 @@ void load_config() {
 }
 
 void free_config() {
-  // TODO: implement
+  if (global_config == NULL) {
+    return;
+  }
+
+  // Free global configuration strings
+  if (global_config->user)
+    free(global_config->user);
+  if (global_config->pid_file)
+    free(global_config->pid_file);
+  if (global_config->log_file)
+    free(global_config->log_file);
+
+  // Free http configuration and its contents
+  if (global_config->http != NULL) {
+    if (global_config->http->mime_types_path)
+      free(global_config->http->mime_types_path);
+    if (global_config->http->default_type)
+      free(global_config->http->default_type);
+    if (global_config->http->access_log_path)
+      free(global_config->http->access_log_path);
+    if (global_config->http->error_log_path)
+      free(global_config->http->error_log_path);
+    if (global_config->http->log_format)
+      free(global_config->http->log_format);
+
+    // Free each server configuration and its contents
+    if (global_config->http->servers) {
+      for (int i = 0; i < global_config->http->num_servers; i++) {
+        server_config *server = &global_config->http->servers[i];
+
+        // Free server-specific strings and string lists
+        if (server->content_dir)
+          free(server->content_dir);
+        if (server->access_log_path)
+          free(server->access_log_path);
+        if (server->error_log_path)
+          free(server->error_log_path);
+        if (server->log_format)
+          free(server->log_format);
+
+        // Free server names string list
+        if (server->server_names) {
+          for (int j = 0; j < server->num_server_names; j++) {
+            if (server->server_names[j]) {
+              free(server->server_names[j]);
+            }
+          }
+          free(server->server_names);
+        }
+
+        // Free index files string list
+        if (server->index_files) {
+          for (int j = 0; j < server->num_index_files; j++) {
+            if (server->index_files[j]) {
+              free(server->index_files[j]);
+            }
+          }
+          free(server->index_files);
+        }
+
+        // Free SSL configuration if it exists
+        if (server->ssl != NULL) {
+          if (server->ssl->cert_file)
+            free(server->ssl->cert_file);
+          if (server->ssl->key_file)
+            free(server->ssl->key_file);
+
+          // Free SSL protocols string list
+          if (server->ssl->protocols) {
+            for (int j = 0; j < server->ssl->num_protocols; j++) {
+              if (server->ssl->protocols[j]) {
+                free(server->ssl->protocols[j]);
+              }
+            }
+            free(server->ssl->protocols);
+          }
+
+          // Free SSL ciphers string list
+          if (server->ssl->ciphers) {
+            for (int j = 0; j < server->ssl->num_ciphers; j++) {
+              if (server->ssl->ciphers[j]) {
+                free(server->ssl->ciphers[j]);
+              }
+            }
+            free(server->ssl->ciphers);
+          }
+
+          free(server->ssl);
+        }
+
+        // Free each location configuration and its contents
+        if (server->locations) {
+          for (int j = 0; j < server->num_locations; j++) {
+            location_config *location = &server->locations[j];
+
+            // Free location-specific strings and string lists
+            if (location->uri)
+              free(location->uri);
+            if (location->content_dir)
+              free(location->content_dir);
+            if (location->proxy_url)
+              free(location->proxy_url);
+            if (location->return_url_text)
+              free(location->return_url_text);
+            if (location->etag_header)
+              free(location->etag_header);
+            if (location->expires_header)
+              free(location->expires_header);
+
+            // Free index files string list
+            if (location->index_files) {
+              for (int k = 0; k < location->num_index_files; k++) {
+                if (location->index_files[k]) {
+                  free(location->index_files[k]);
+                }
+              }
+              free(location->index_files);
+            }
+
+            // Free allowed IPs string list
+            if (location->allowed_ips) {
+              for (int k = 0; k < location->num_allowed_ips; k++) {
+                if (location->allowed_ips[k]) {
+                  free(location->allowed_ips[k]);
+                }
+              }
+              free(location->allowed_ips);
+            }
+
+            // Free denied IPs string list
+            if (location->denied_ips) {
+              for (int k = 0; k < location->num_denied_ips; k++) {
+                if (location->denied_ips[k]) {
+                  free(location->denied_ips[k]);
+                }
+              }
+              free(location->denied_ips);
+            }
+          }
+          free(server->locations);
+        }
+      }
+      free(global_config->http->servers);
+    }
+    free(global_config->http);
+  }
+
+  // Finally, free the main config struct
+  free(global_config);
+  global_config = NULL; // Prevent double-free
 }

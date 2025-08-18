@@ -22,6 +22,10 @@
 
 GHashTable *client_map;
 
+volatile sig_atomic_t shutdown_flag = 0;
+
+void sigint_handler(int signum) { shutdown_flag = 1; }
+
 typedef struct {
   char *key;
   char *value;
@@ -103,6 +107,8 @@ void fork_workers(int *listen_sockets);
 void server_cleanup(int *listen_sockets);
 void check_valid_config();
 
+void free_client(client_t *client);
+
 // ##############################################################################
 // ## state transitions
 // ##############################################################################
@@ -130,8 +136,8 @@ void transition_state(client_t *client, int epoll_fd, state_e new_state) {
          client->ip);
     break;
   case CLOSING:
-    close_connection(client, epoll_fd);
     logs('D', "Transitioned connection %s to CLOSING.", NULL, client->ip);
+    close_connection(client, epoll_fd);
     break;
   }
 }
@@ -231,6 +237,7 @@ int handle_new_connection(int connection_socket, int epoll_fd,
     logs('E', "Failed to add client socket to epoll.",
          "handle_new_connection(): epoll_ctl() failed.");
     close(client->fd);
+    free_client(client);
     return -1;
   }
 
@@ -244,25 +251,27 @@ int handle_new_connection(int connection_socket, int epoll_fd,
 }
 
 void close_connection(client_t *client, int epoll_fd) {
-  // if client doesn't exist in the clients map then can't remove
-  if (!g_hash_table_contains(client_map, GINT_TO_POINTER(client->fd))) {
+  if (client == NULL) {
     return;
   }
 
-  // remove the socket from the epoll instance
+  logs('I', "Closing connection for client %s (socket %d)", NULL, client->ip,
+       client->fd);
+
+  // remove the file descriptor from the epoll instance
   if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client->fd, NULL) == -1 &&
       errno != ENOENT) {
     perror("REASON: epoll_ctl: DEL client socket failed");
   }
 
-  // close the file descriptor.
+  // close the socket file descriptor
   close(client->fd);
 
-  // remove client from client map
+  // remove the client from the hash table
+  // this will trigger the g_hash_table_new_full's
+  // GDestroyNotify, which will call free_client(),
+  // thereby freeing the client_t struct and its contents
   g_hash_table_remove(client_map, GINT_TO_POINTER(client->fd));
-
-  logs('I', "Closed connection for client %s (socket %d)", NULL, client->ip,
-       client->fd);
 }
 
 // ##############################################################################
@@ -496,14 +505,15 @@ void run_worker(int *listen_sockets, int num_sockets) {
   int epoll_fd = setup_epoll(listen_sockets, num_sockets);
 
   // create client_map
-  client_map = g_hash_table_new(g_direct_hash, g_direct_equal);
+  client_map = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL,
+                                     (GDestroyNotify)free_client);
   if (client_map == NULL) {
     logs('E', "Worker failed to create client_map.",
          "run_worker(): g_hash_table_new() failed.");
     exits();
   }
 
-  while (1) {
+  while (shutdown_flag == 0) {
     num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
     if (num_events == -1) {
       if (errno == EINTR) {
@@ -572,6 +582,11 @@ void run_worker(int *listen_sockets, int num_sockets) {
       }
     }
   }
+
+  close(epoll_fd);
+  g_hash_table_destroy(client_map);
+  atexit(free_config);
+  exit(0);
 }
 
 void init_sockets(int *listen_sockets) {
@@ -597,7 +612,7 @@ void fork_workers(int *listen_sockets) {
     }
     // child process
     if (pid == 0) {
-      logs('I', "Worker process %d started", NULL, i);
+      logs('I', "Worker process %d started (pid %d).", NULL, i, getpid());
       run_worker(listen_sockets, global_config->http->num_servers);
       exits();
     }
@@ -655,33 +670,48 @@ void check_valid_config() {
   }
 }
 
+void free_client(client_t *client) {
+  if (client == NULL) {
+    return;
+  }
+
+  // Free dynamically allocated string
+  free(client->ip);
+
+  // Close the file descriptor for the file being served, if it's open
+  if (client->file_fd != -1) {
+    close(client->file_fd);
+  }
+
+  // Free the struct itself
+  free(client);
+}
+
 int main() {
   logs('I', "Starting server...", NULL);
+  signal(SIGINT, sigint_handler);
 
-	// load config
-	load_config();
-	
-	printf("%ld", parse_duration_ms("10s"));
-	printf("%ld", global_config->http->servers[0].timeout);
+  // load config
+  load_config();
 
-  /*
-// check if config is valid
-check_valid_config();
+  // check if config is valid
+  check_valid_config();
 
-// setup listening sockets
-int listen_sockets[global_config->http->num_servers];
+  // setup listening sockets
+  int listen_sockets[global_config->http->num_servers];
 
-// fill socket array with server block sockets
-init_sockets(listen_sockets);
+  // fill socket array with server block sockets
+  init_sockets(listen_sockets);
 
-// fork worker processes
-fork_workers(listen_sockets);
+  // fork worker processes
+  fork_workers(listen_sockets);
 
-// clean up server resources
-server_cleanup(listen_sockets);
-*/
+  // clean up server resources
+  server_cleanup(listen_sockets);
+
   // TODO: free_config here when it's implemented
-  // free_config();
+  atexit(free_config);
+	logs('I', "Server exiting.", NULL);
 
   return 0;
 }
