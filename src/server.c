@@ -4,11 +4,13 @@
 #include <fcntl.h>
 #include <glib.h>
 #include <netinet/in.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/mman.h>
 #include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -27,7 +29,7 @@ volatile sig_atomic_t shutdown_flag = 0;
 
 void sigint_handler(int signum) { shutdown_flag = 1; }
 
-AO_t active_connections = 0;
+atomic_int *total_connections;
 
 typedef struct {
   char *key;
@@ -98,8 +100,8 @@ typedef struct {
 void transition_state(client_t *client, int epoll_fd, state_e new_state);
 int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events);
 int handle_new_connection(int connection_socket, int epoll_fd,
-                          int *listen_sockets);
-void close_connection(client_t *client, int epoll_fd);
+                          int *listen_sockets, int *active_connections);
+void close_connection(client_t *client, int epoll_fd, int *active_connections);
 
 int read_client_request(client_t *client);
 
@@ -154,7 +156,6 @@ void transition_state(client_t *client, int epoll_fd, state_e new_state) {
        state_to_string(current_state), state_to_string(new_state));
 
   if (new_state == CLOSING) {
-    close_connection(client, epoll_fd);
   }
 }
 
@@ -199,7 +200,7 @@ void initialise_client(client_t *client) {
 }
 
 int handle_new_connection(int connection_socket, int epoll_fd,
-                          int *listen_sockets) {
+                          int *listen_sockets, int *active_connections) {
   struct sockaddr_in client_address;
   socklen_t client_address_len;
   struct epoll_event event;
@@ -257,24 +258,31 @@ int handle_new_connection(int connection_socket, int epoll_fd,
     return -1;
   }
 
-  AO_fetch_and_add1(&active_connections);
-
   logs('I', "Accepted connection %s (socket %d) on server %s:%d", NULL,
        client->ip, client->fd, client->parent_server->server_names[0],
        client->parent_server->listen_port);
 
-	logs('I', "Active connections: %lu", NULL, (unsigned long)active_connections);
+  (*active_connections)++;
+  atomic_fetch_add(total_connections, 1);
+
+  logs('I', "Total active connections: %d", NULL,
+       atomic_load(total_connections));
 
   logs('D', "Transitioned connection %s from NOTHING to READING.", NULL,
        client->ip);
 
+	printf("Total active connections: %d\n", atomic_load(total_connections));
+
   return 0;
 }
 
-void close_connection(client_t *client, int epoll_fd) {
+void close_connection(client_t *client, int epoll_fd, int *active_connections) {
   if (client == NULL) {
     return;
   }
+
+  logs('I', "Closing connection for client %s (socket %d)", NULL, client->ip,
+       client->fd);
 
   // remove the file descriptor from the epoll instance
   if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client->fd, NULL) == -1 &&
@@ -291,12 +299,13 @@ void close_connection(client_t *client, int epoll_fd) {
   // thereby freeing the client_t struct and its contents
   g_hash_table_remove(client_map, GINT_TO_POINTER(client->fd));
 
-  AO_fetch_and_sub1(&active_connections);
+  (*active_connections)--;
+  atomic_fetch_sub(total_connections, 1);
 
-  logs('I', "Closing connection for client %s (socket %d)", NULL, client->ip,
-       client->fd);
-	logs('I', "Active connections: %lu", NULL, (unsigned long)active_connections);
+  logs('I', "Total active connections: %d", NULL,
+       atomic_load(total_connections));
 
+	printf("Total active connections: %d\n", atomic_load(total_connections));
 }
 
 // ##############################################################################
@@ -529,6 +538,8 @@ void run_worker(int *listen_sockets, int num_sockets) {
   int num_events;
   int epoll_fd = setup_epoll(listen_sockets, num_sockets);
 
+  int active_connections = 0;
+
   // create client_map
   client_map = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL,
                                      (GDestroyNotify)free_client);
@@ -566,7 +577,8 @@ void run_worker(int *listen_sockets, int num_sockets) {
 
       if (is_listening_socket) {
         // handle new connection
-        handle_new_connection(current_fd, epoll_fd, listen_sockets);
+        handle_new_connection(current_fd, epoll_fd, listen_sockets,
+                              &active_connections);
       } else {
         // get client from client map
         client_t *client = (client_t *)g_hash_table_lookup(
@@ -574,6 +586,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
 
         if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
           transition_state(client, epoll_fd, CLOSING);
+          close_connection(client, epoll_fd, &active_connections);
         } else if (events[i].events & EPOLLIN) {
           // it's a read event
           if (read_client_request(client) == 0) {
@@ -584,6 +597,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
           } else {
             // read returns -1, which means error, so close connection
             transition_state(client, epoll_fd, CLOSING);
+            close_connection(client, epoll_fd, &active_connections);
           }
 
         } else if (events[i].events & EPOLLOUT) {
@@ -598,14 +612,16 @@ void run_worker(int *listen_sockets, int num_sockets) {
               transition_state(client, epoll_fd, READING);
             } else {
               transition_state(client, epoll_fd, CLOSING);
+              close_connection(client, epoll_fd, &active_connections);
             }
           } else {
             // write returns -1, which means error, so close connection
             transition_state(client, epoll_fd, CLOSING);
+            close_connection(client, epoll_fd, &active_connections);
           }
         } else {
           logs('E', "Unexpected event on socket %d", NULL, current_fd);
-          close_connection(client, epoll_fd);
+          close_connection(client, epoll_fd, &active_connections);
         }
       }
     }
@@ -614,6 +630,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
   close(epoll_fd);
   g_hash_table_destroy(client_map);
   atexit(free_config);
+  munmap(total_connections, sizeof(atomic_int));
   exit(0);
 }
 
@@ -719,6 +736,23 @@ int main() {
   logs('I', "Starting server...", NULL);
   signal(SIGINT, sigint_handler);
 
+  const char *shm_name = "/server_connections";
+  int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
+  if (shm_fd == -1) {
+    perror("ERROR: shm_open failed");
+    exit(EXIT_FAILURE);
+  }
+  ftruncate(shm_fd, sizeof(atomic_int));
+
+  total_connections = mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
+                           MAP_SHARED, shm_fd, 0);
+  if (total_connections == MAP_FAILED) {
+    perror("ERROR: mmap failed");
+    exit(EXIT_FAILURE);
+  }
+
+  atomic_store(total_connections, 0);
+
   // 1. load config
   load_config();
 
@@ -739,6 +773,7 @@ int main() {
 
   // 7. free_config at exit for master process
   atexit(free_config);
+  shm_unlink(shm_name);
   logs('I', "Server exiting.", NULL);
 
   return 0;
