@@ -478,10 +478,10 @@ int read_client_request(client_t *client) {
         if (parse_request(client->in_buffer, client->in_buffer_len,
                           client->request) == 0) {
           // Success! The request is parsed.
-          printf("Request line: %s %s %s\n", client->request->request_line.method,
+          logs('I', "Request line: %s %s %s\n", NULL, client->request->request_line.method,
                  client->request->request_line.uri,
                  client->request->request_line.version);
-					printf("Connection: %s\n", (const char *)g_hash_table_lookup(client->request->headers, "Connection"));
+					logs('I', "Connection: %s\n", NULL, (const char *)g_hash_table_lookup(client->request->headers, "Connection"));
           return 0; // Return 0 to trigger state change to WRITING
         } else {
           // Parsing failed
@@ -628,6 +628,7 @@ int send_file_response(client_t *client) {
 
 // main orchestrator function
 int write_client_response(client_t *client) {
+	// TODO: use client->request here
   const char *response_body = "Hello World";
   const char *content_type = "text/plain";
 
