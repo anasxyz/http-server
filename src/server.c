@@ -223,6 +223,13 @@ int handle_new_connection(int connection_socket, int epoll_fd,
     return -1;
   }
 
+	// if max connections reached, reject connection
+	if (atomic_load(total_connections) >= 1) {
+		logs('W', "Server is full. Rejecting connection.", NULL);
+		close(client_sock); // immediately close socket
+		return 0;
+	}
+
   // set client's socket to non-blocking
   set_nonblocking(client_sock);
 
@@ -519,7 +526,7 @@ int setup_epoll(int *listen_sockets, int num_sockets) {
   // add the listening sockets to the epoll instance
   struct epoll_event event;
   for (int i = 0; i < num_sockets; i++) {
-    event.events = EPOLLIN;
+    event.events = EPOLLIN | EPOLLEXCLUSIVE;
     event.data.fd = listen_sockets[i];
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_sockets[i], &event) == -1) {
       logs('E', "Worker failed to register listening socket.",
@@ -577,8 +584,10 @@ void run_worker(int *listen_sockets, int num_sockets) {
 
       if (is_listening_socket) {
         // handle new connection
-        handle_new_connection(current_fd, epoll_fd, listen_sockets,
-                              &active_connections);
+        if (handle_new_connection(current_fd, epoll_fd, listen_sockets,
+                              &active_connections) == -1) {
+          logs('W', "Server is full. Rejecting connection.", NULL);
+        }
       } else {
         // get client from client map
         client_t *client = (client_t *)g_hash_table_lookup(
