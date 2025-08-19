@@ -74,8 +74,9 @@ typedef struct {
   char *ip;
 
   // fields for receiving data
-  char in_buffer[MAX_BUFFER_SIZE];
+  char *in_buffer;
   size_t in_buffer_len;
+  size_t in_buffer_size;
 
   // fields for sending data
   char out_buffer[MAX_BUFFER_SIZE];
@@ -182,7 +183,7 @@ void initialise_client(client_t *client) {
   client->ip = NULL;
 
   // initialise receiving data fields
-  memset(client->in_buffer, 0, MAX_BUFFER_SIZE);
+  client->in_buffer = NULL;
   client->in_buffer_len = 0;
 
   // initialise sending data fields
@@ -427,25 +428,43 @@ int parse_request(char *buffer, size_t buffer_len, request_t *request) {
 int read_client_request(client_t *client) {
   char temp_buffer[MAX_BUFFER_SIZE];
   ssize_t bytes_read;
+  size_t headers_len = 0;
+  size_t body_len = 0;
 
-  // keep reading until we get a full request
   while (1) {
     bytes_read = read(client->fd, temp_buffer, MAX_BUFFER_SIZE);
 
     if (bytes_read == 0) {
       return -1; // Client closed connection
     }
+
     if (bytes_read == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        return 1; // No more data to read for now, so return 1 to not change
-                  // state
+        // No more data to read for now, so return 1 to not change state
+        return 1;
       }
       return -1; // A real error
     }
 
-    // Check for buffer overflow
-    if (client->in_buffer_len + bytes_read >= MAX_BUFFER_SIZE) {
-      return -1;
+    // Allocate memory for in_buffer if it's the first read
+    if (client->in_buffer == NULL) {
+      client->in_buffer_size = bytes_read;
+      client->in_buffer = malloc(client->in_buffer_size + 1);
+      if (client->in_buffer == NULL) {
+        logs('E', "Failed to allocate memory for input buffer", NULL);
+        return -1;
+      }
+    } else {
+      // Reallocate memory for larger requests
+      if (client->in_buffer_len + bytes_read + 1 > client->in_buffer_size) {
+        client->in_buffer_size = client->in_buffer_len + bytes_read + 1;
+        char *temp = realloc(client->in_buffer, client->in_buffer_size);
+        if (temp == NULL) {
+          logs('E', "Failed to reallocate memory for input buffer", NULL);
+          return -1;
+        }
+        client->in_buffer = temp;
+      }
     }
 
     // Copy new data to client's buffer
@@ -453,35 +472,35 @@ int read_client_request(client_t *client) {
     client->in_buffer_len += bytes_read;
     client->in_buffer[client->in_buffer_len] = '\0';
 
-    // Check for the end of the headers (\r\n\r\n)
+    // Check if we have received a complete request
     char *end_of_headers = strstr(client->in_buffer, "\r\n\r\n");
     if (end_of_headers) {
-      // Headers are complete. Now check if we have the full body.
-      size_t headers_len = (end_of_headers - client->in_buffer) + 4;
-      size_t body_len = 0;
+      if (headers_len == 0) {
+        headers_len = (end_of_headers - client->in_buffer) + 4;
 
-      // Search for Content-Length header to determine body size
-      char *content_length_header =
-          strstr(client->in_buffer, "Content-Length:");
-      if (content_length_header) {
-        // Parse the Content-Length value
-        char *value_start = content_length_header + strlen("Content-Length:");
-        body_len = (size_t)atoi(value_start);
+        // Search for Content-Length header to determine body size
+        char *content_length_header =
+            strstr(client->in_buffer, "Content-Length:");
+        if (content_length_header) {
+          char *value_start = content_length_header + strlen("Content-Length:");
+          body_len = (size_t)atoi(value_start);
+        }
       }
 
-      size_t full_request_len = headers_len + body_len;
-
       // Check if the entire request (headers + body) has been received
-      if (client->in_buffer_len >= full_request_len) {
+      if (client->in_buffer_len >= headers_len + body_len) {
         // A complete request is now in the buffer
         client->request = malloc(sizeof(request_t));
+        if (client->request == NULL) {
+          logs('E', "Failed to allocate memory for request_t", NULL);
+          return -1;
+        }
+
         if (parse_request(client->in_buffer, client->in_buffer_len,
                           client->request) == 0) {
           // Success! The request is parsed.
-          logs('I', "Request line: %s %s %s\n", NULL, client->request->request_line.method,
-                 client->request->request_line.uri,
-                 client->request->request_line.version);
-					logs('I', "Connection: %s\n", NULL, (const char *)g_hash_table_lookup(client->request->headers, "Connection"));
+          // Reset buffer for the next request
+          client->in_buffer_len = 0;
           return 0; // Return 0 to trigger state change to WRITING
         } else {
           // Parsing failed
@@ -628,7 +647,7 @@ int send_file_response(client_t *client) {
 
 // main orchestrator function
 int write_client_response(client_t *client) {
-	// TODO: use client->request here
+  // TODO: use client->request here
   const char *response_body = "Hello World";
   const char *content_type = "text/plain";
 
@@ -729,20 +748,28 @@ void run_worker(int *listen_sockets, int num_sockets) {
           close_connection(client, epoll_fd, &active_connections);
         } else if (events[i].events & EPOLLIN) {
           // it's a read event
-          if (read_client_request(client) == 0) {
+          int read_status = read_client_request(client);
+          if (read_status == 0) {
             // read returns 0, which means success
             // transition epoll event to EPOLLOUT and set state to WRITING
             logs('D', "No more data to read from Client %s", NULL, client->ip);
             transition_state(client, epoll_fd, WRITING);
+          } else if (read_status == 1) {
+            // read returns 1, which means more data is expected, stay in
+            // READING state
+            logs('D', "More data to read from Client %s", NULL, client->ip);
+            continue;
           } else {
             // read returns -1, which means error, so close connection
+            logs('E', "read_client_request() failed. Output: %s", NULL,
+                 read_status);
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
           }
-
         } else if (events[i].events & EPOLLOUT) {
           // it's a write event
-          if (write_client_response(client) == 0) {
+          int write_status = write_client_response(client);
+          if (write_status == 0) {
             // write returns 0, which means success
             // transition epoll event to EPOLLIN and set state to READING
             int keepalive = 1; // obviously would be replaced when we actually
@@ -756,6 +783,8 @@ void run_worker(int *listen_sockets, int num_sockets) {
             }
           } else {
             // write returns -1, which means error, so close connection
+            logs('E', "write_client_response() failed. Output: %s", NULL,
+                 write_status);
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
           }
@@ -870,6 +899,10 @@ void free_client(client_t *client) {
 
   // Free the parsed request data, if it exists
   free_request(client->request);
+
+  if (client->in_buffer != NULL) {
+    free(client->in_buffer);
+  }
 
   // Free the struct itself
   free(client);
