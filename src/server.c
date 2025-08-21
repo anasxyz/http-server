@@ -121,9 +121,10 @@ int build_headers(client_t *client, int status_code, const char *status_message,
 
 void free_client(client_t *client);
 
-// ##############################################################################
-// ## state transitions
-// ##############################################################################
+/*
+ * STATE MACHINE
+ *
+ */
 
 const char *state_to_string(state_e state) {
   switch (state) {
@@ -176,9 +177,10 @@ int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events) {
   return 0;
 }
 
-// ##############################################################################
-// ## connection handling
-// ##############################################################################
+/*
+ * CONNECTION HANDLING
+ *
+ */
 
 void initialise_client(client_t *client) {
   // initialise socket fields
@@ -324,9 +326,10 @@ void close_connection(client_t *client, int epoll_fd, int *active_connections) {
   printf("Total active connections: %d\n", atomic_load(total_connections));
 }
 
-// ##############################################################################
-// ## request handling
-// ##############################################################################
+/*
+ * REQUEST HANDLING
+ *
+ */
 
 void free_request(request_t *request) {
   if (request == NULL) {
@@ -518,12 +521,15 @@ int read_client_request(client_t *client) {
   }
 }
 
-// ##############################################################################
-// ## response handling
-// ##############################################################################
+/*
+ * RESPONSE HANDLING
+ *
+ */
 
-// Handles partial writes for a generic buffer.
-// Returns 0 on success, 1 on EAGAIN (partial write), -1 on fatal error.
+// core function for writing buffers, handles partial writes
+// returns -1 on failure
+// returns 0 on success
+// returns 1 on EAGAIN (partial write)
 int write_partial(client_t *client, const char *buffer, size_t *offset,
                   size_t len) {
   size_t remaining = len - *offset;
@@ -549,8 +555,10 @@ int write_partial(client_t *client, const char *buffer, size_t *offset,
   return 1;
 }
 
-// sends a file using sendfile()
-// returns 0 on success, 1 on EAGAIN (partial write), -1 on fatal error
+// sends a file conetents using sendfile()
+// returns -1 on failure
+// returns 0 on success
+// returns 1 on EAGAIN (partial write)
 int send_file_body(client_t *client) {
   if (client->file_offset >= client->file_size) {
     return 0;
@@ -568,6 +576,12 @@ int send_file_body(client_t *client) {
   }
 
   if (client->file_offset >= client->file_size) {
+    // clean up if the file is fully sent
+    close(client->file_fd);
+    client->file_fd = -1;
+    client->file_offset = 0;
+    client->file_size = 0;
+    client->headers_sent = false;
     return 0;
   }
   return 1;
@@ -581,13 +595,13 @@ int build_headers(client_t *client, int status_code, const char *status_message,
                                 "Connection: keep-alive\r\n"
                                 "\r\n";
 
-  // Calculate the size required for the headers
+  // calculate the size required for the headers
   size_t required_size =
       snprintf(NULL, 0, header_template, status_code, status_message,
                content_type, content_length) +
       1;
 
-  // Allocate or reallocate the buffer
+  // allocate or reallocate the buffer
   if (client->out_buffer == NULL || client->out_buffer_size < required_size) {
     client->out_buffer_size = required_size;
     char *temp = realloc(client->out_buffer, client->out_buffer_size);
@@ -598,48 +612,56 @@ int build_headers(client_t *client, int status_code, const char *status_message,
     client->out_buffer = temp;
   }
 
-  // Write the headers into the buffer
+  // write the headers into the buffer
   snprintf(client->out_buffer, client->out_buffer_size, header_template,
            status_code, status_message, content_type, content_length);
   client->out_buffer_len = strlen(client->out_buffer);
-  client->out_buffer_sent = 0; // Reset sent count for new write operation
+  client->out_buffer_sent = 0; // reset sent count for new write operation
 
   return 0;
 }
 
-int write_client_response(client_t *client) {
+// sends headers and dynamic body (non file body)
+// returns -1 on failure
+// returns 0 on success
+// returns 1 on partial write
+int send_headers_and_body(client_t *client) {
   int status = 1; // default to partial write
 
-  // --- handle simple in memory responses ---
-  if (client->file_fd == -1) {
-    // only build the response if it hasn't been built yet
-    if (client->out_buffer == NULL) {
-      const char *response_body = "Hello World";
-      size_t body_len = strlen(response_body);
-      if (build_headers(client, 200, "OK", "text/plain", body_len) != 0) {
-        return -1;
-      }
-      // append the body to the buffer
-      memcpy(client->out_buffer + client->out_buffer_len, response_body,
-             body_len);
-      client->out_buffer_len += body_len;
+  // only build the response if it hasn't been built yet
+  if (client->out_buffer == NULL) {
+    const char *response_body = "Hello World";
+    size_t body_len = strlen(response_body);
+    if (build_headers(client, 200, "OK", "text/plain", body_len) != 0) {
+      return -1;
     }
-
-    // write the full response from the buffer
-    status = write_partial(client, client->out_buffer, &client->out_buffer_sent,
-                           client->out_buffer_len);
-
-    // clean up if the entire response has been sent
-    if (status == 0) {
-      free(client->out_buffer);
-      client->out_buffer = NULL;
-      client->out_buffer_len = 0;
-      client->out_buffer_size = 0;
-    }
-    return status;
+    // append the body to the buffer
+    memcpy(client->out_buffer + client->out_buffer_len, response_body,
+           body_len);
+    client->out_buffer_len += body_len;
   }
 
-  // --- handle file based responses ---
+  // write the full response from the buffer
+  status = write_partial(client, client->out_buffer, &client->out_buffer_sent,
+                         client->out_buffer_len);
+
+  // clean up if the entire response has been sent
+  if (status == 0) {
+    free(client->out_buffer);
+    client->out_buffer = NULL;
+    client->out_buffer_len = 0;
+    client->out_buffer_size = 0;
+  }
+  return status;
+}
+
+// sends headers only
+// returns -1 on failure
+// returns 0 on success
+// returns 1 on partial write
+int send_headers_only(client_t *client) {
+  int status = 1; // default to partial write
+
   if (!client->headers_sent) {
     // build headers for the file response
     if (client->out_buffer == NULL) {
@@ -667,23 +689,37 @@ int write_client_response(client_t *client) {
     }
   }
 
-  // --- send file body only if headers are already sent ---
-  status = send_file_body(client);
-
-  // clean up if the file is fully sent
-  if (status == 0) {
-    close(client->file_fd);
-    client->file_fd = -1;
-    client->file_offset = 0;
-    client->file_size = 0;
-    client->headers_sent = false;
-  }
   return status;
 }
 
-// ##############################################################################
-// ## server process handling
-// ##############################################################################
+int write_client_response(client_t *client) {
+  int status = 1; // default to partial write
+
+  // --- handle simple in memory responses ---
+  if (client->file_fd == -1) {
+    status = send_headers_and_body(client);
+    return status;
+  }
+
+  // if we're sending a file response, send headers first
+  // if they haven't been sent yet
+  if (!client->headers_sent) {
+    status = send_headers_only(client);
+  }
+
+  // if headers have already been sent or are fully sent, send the file
+  if (client->headers_sent || status == 0) {
+    status = send_file_body(client);
+    return status;
+  }
+
+  return status;
+}
+
+/*
+ * SERVER PROCESS HANDLING
+ *
+ */
 
 int setup_epoll(int *listen_sockets, int num_sockets) {
   int epoll_fd = epoll_create1(0);
