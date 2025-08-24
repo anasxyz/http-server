@@ -44,7 +44,7 @@ typedef struct {
 
 typedef struct {
   request_line_t request_line;
-  header_t *headers;
+  GHashTable *headers;
   size_t num_headers;
   char *body;
   size_t body_len;
@@ -74,12 +74,14 @@ typedef struct {
   char *ip;
 
   // fields for receiving data
-  char in_buffer[MAX_BUFFER_SIZE];
+  char *in_buffer;
   size_t in_buffer_len;
+  size_t in_buffer_size;
 
   // fields for sending data
-  char out_buffer[MAX_BUFFER_SIZE];
+  char *out_buffer;
   size_t out_buffer_len;
+  size_t out_buffer_size;
   size_t out_buffer_sent;
 
   // fields for state
@@ -94,6 +96,9 @@ typedef struct {
   off_t file_size;
 
   server_config *parent_server; // pointer to parent server config
+
+  request_t *request;
+  response_t *response;
 } client_t;
 
 // forward declarations of all functions in this file
@@ -111,12 +116,15 @@ void init_sockets(int *listen_sockets);
 void fork_workers(int *listen_sockets);
 void server_cleanup(int *listen_sockets);
 void check_valid_config();
+int build_headers(client_t *client, int status_code, const char *status_message,
+                  const char *content_type, size_t content_length);
 
 void free_client(client_t *client);
 
-// ##############################################################################
-// ## state transitions
-// ##############################################################################
+/*
+ * STATE MACHINE
+ *
+ */
 
 const char *state_to_string(state_e state) {
   switch (state) {
@@ -169,9 +177,10 @@ int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events) {
   return 0;
 }
 
-// ##############################################################################
-// ## connection handling
-// ##############################################################################
+/*
+ * CONNECTION HANDLING
+ *
+ */
 
 void initialise_client(client_t *client) {
   // initialise socket fields
@@ -179,13 +188,15 @@ void initialise_client(client_t *client) {
   client->ip = NULL;
 
   // initialise receiving data fields
-  memset(client->in_buffer, 0, MAX_BUFFER_SIZE);
+  client->in_buffer = NULL;
   client->in_buffer_len = 0;
+  client->in_buffer_size = 0;
 
   // initialise sending data fields
-  memset(client->out_buffer, 0, MAX_BUFFER_SIZE);
+  client->out_buffer = NULL;
   client->out_buffer_len = 0;
   client->out_buffer_sent = 0;
+  client->out_buffer_size = 0;
 
   // initialise state fields
   client->state = READING;
@@ -223,12 +234,12 @@ int handle_new_connection(int connection_socket, int epoll_fd,
     return -1;
   }
 
-	// if max connections reached, reject connection
-	if (atomic_load(total_connections) >= global_config->max_connections) {
-		logs('W', "Server is full. Rejecting connection.", NULL);
-		close(client_sock); // immediately close socket
-		return 0;
-	}
+  // if max connections reached, reject connection
+  if (atomic_load(total_connections) >= global_config->max_connections) {
+    logs('W', "Server is full. Rejecting connection.", NULL);
+    close(client_sock); // immediately close socket
+    return 0;
+  }
 
   // set client's socket to non-blocking
   set_nonblocking(client_sock);
@@ -278,7 +289,7 @@ int handle_new_connection(int connection_socket, int epoll_fd,
   logs('D', "Transitioned connection %s from NOTHING to READING.", NULL,
        client->ip);
 
-	printf("Total active connections: %d\n", atomic_load(total_connections));
+  printf("Total active connections: %d\n", atomic_load(total_connections));
 
   return 0;
 }
@@ -312,64 +323,213 @@ void close_connection(client_t *client, int epoll_fd, int *active_connections) {
   logs('I', "Total active connections: %d", NULL,
        atomic_load(total_connections));
 
-	printf("Total active connections: %d\n", atomic_load(total_connections));
+  printf("Total active connections: %d\n", atomic_load(total_connections));
 }
 
-// ##############################################################################
-// ## request handling
-// ##############################################################################
+/*
+ * REQUEST HANDLING
+ *
+ */
+
+void free_request(request_t *request) {
+  if (request == NULL) {
+    return;
+  }
+
+  // Free the dynamically allocated strings for the request line
+  free(request->request_line.method);
+  free(request->request_line.uri);
+  free(request->request_line.version);
+
+  // The GHashTable's destroy function will free its own keys and values
+  if (request->headers != NULL) {
+    g_hash_table_destroy(request->headers);
+  }
+
+  // Free the request body, if it exists
+  free(request->body);
+
+  // Finally, free the request struct itself
+  free(request);
+}
+
+// helper function to find a newline sequence
+char *find_newline(char *buffer, size_t len) {
+  for (size_t i = 0; i < len; ++i) {
+    if (buffer[i] == '\r' && (i + 1) < len && buffer[i + 1] == '\n') {
+      return &buffer[i];
+    }
+  }
+  return NULL;
+}
+int parse_request(char *buffer, size_t buffer_len, request_t *request) {
+  char *current_pos = buffer;
+  char *end_of_line;
+
+  // parse request line
+  end_of_line = find_newline(current_pos, buffer_len - (current_pos - buffer));
+  if (end_of_line == NULL) {
+    return -1; // malformed request line
+  }
+
+  *end_of_line = '\0'; // null terminate request line
+
+  char method[16], uri[256], version[16];
+  if (sscanf(current_pos, "%s %s %s", method, uri, version) != 3) {
+    return -1; // malformed request line
+  }
+
+  request->request_line.method = strdup(method);
+  request->request_line.uri = strdup(uri);
+  request->request_line.version = strdup(version);
+  current_pos = end_of_line + 2;
+
+  // parse headers
+  request->headers =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  if (request->headers == NULL) {
+    return -1; // failed to allocate memory for headers
+  }
+
+  while ((end_of_line =
+              find_newline(current_pos, buffer_len - (current_pos - buffer)))) {
+    *end_of_line = '\0'; // null terminate header line
+
+    // check for end of headers
+    if (strlen(current_pos) == 0) {
+      current_pos = end_of_line + 2;
+      break;
+    }
+
+    char *colon_pos = strchr(current_pos, ':');
+    if (colon_pos == NULL) {
+      return -1; // malformed header
+    }
+
+    *colon_pos = '\0'; // null terminate header name
+    char *key = current_pos;
+    char *value = trim(colon_pos + 1);
+
+    g_hash_table_insert(request->headers, g_strdup(key), g_strdup(value));
+
+    current_pos = end_of_line + 2;
+  }
+
+  // handle body
+  const gchar *content_length_str =
+      g_hash_table_lookup(request->headers, "Content-Length");
+  if (content_length_str) {
+    request->body_len = atoi(content_length_str);
+    if (current_pos + request->body_len <= buffer + buffer_len) {
+      request->body = malloc(request->body_len + 1);
+      memcpy(request->body, current_pos, request->body_len);
+      request->body[request->body_len] = '\0';
+    } else {
+      g_hash_table_destroy(request->headers);
+      return -1; // malformed request
+    }
+  }
+
+  return 0;
+}
 
 int read_client_request(client_t *client) {
   char temp_buffer[MAX_BUFFER_SIZE];
   ssize_t bytes_read;
+  size_t headers_len = 0;
+  size_t body_len = 0;
 
-  // keep reading until we get a full request
   while (1) {
-    // read the raw request into temporary buffer
     bytes_read = read(client->fd, temp_buffer, MAX_BUFFER_SIZE);
 
-    // if read() return 0, it means the client closed the connection
     if (bytes_read == 0) {
-      return -1;
+      return -1; // Client closed connection
     }
 
-    // if read() returns -1, it means there's an error
     if (bytes_read == -1) {
-      // if error is EAGAIN or EWOULDBLOCK, it means that there is no more data
-      // to read right now
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        return 0;
-      } else {
-        // a real error occured, so handle it
+        // No more data to read for now, so return 1 to not change state
+        return 1;
+      }
+      return -1; // A real error
+    }
+
+    // Allocate memory for in_buffer if it's the first read
+    if (client->in_buffer == NULL) {
+      client->in_buffer_size = bytes_read;
+      client->in_buffer = malloc(client->in_buffer_size + 1);
+      if (client->in_buffer == NULL) {
+        logs('E', "Failed to allocate memory for input buffer", NULL);
         return -1;
+      }
+    } else {
+      // Reallocate memory for larger requests
+      if (client->in_buffer_len + bytes_read + 1 > client->in_buffer_size) {
+        client->in_buffer_size = client->in_buffer_len + bytes_read + 1;
+        char *temp = realloc(client->in_buffer, client->in_buffer_size);
+        if (temp == NULL) {
+          logs('E', "Failed to reallocate memory for input buffer", NULL);
+          return -1;
+        }
+        client->in_buffer = temp;
       }
     }
 
-    // if we got this far, this means that bytes_read > 0
-    // so add the new data to client's in_buffer
-    // check for buffer overflow first before copying data
-    // if new data exceeds fixed size buffer then treat as error
-    if (client->in_buffer_len + bytes_read >= MAX_BUFFER_SIZE) {
-      return -1;
-    }
-
-    // copy new data from temp buffer into client main buffer
+    // Copy new data to client's buffer
     memcpy(client->in_buffer + client->in_buffer_len, temp_buffer, bytes_read);
     client->in_buffer_len += bytes_read;
-
-    // null terminate for easier parsing late
     client->in_buffer[client->in_buffer_len] = '\0';
 
-    // printf("%s", client->in_buffer);
+    // Check if we have received a complete request
+    char *end_of_headers = strstr(client->in_buffer, "\r\n\r\n");
+    if (end_of_headers) {
+      if (headers_len == 0) {
+        headers_len = (end_of_headers - client->in_buffer) + 4;
+
+        // Search for Content-Length header to determine body size
+        char *content_length_header =
+            strstr(client->in_buffer, "Content-Length:");
+        if (content_length_header) {
+          char *value_start = content_length_header + strlen("Content-Length:");
+          body_len = (size_t)atoi(value_start);
+        }
+      }
+
+      // Check if the entire request (headers + body) has been received
+      if (client->in_buffer_len >= headers_len + body_len) {
+        // A complete request is now in the buffer
+        client->request = malloc(sizeof(request_t));
+        if (client->request == NULL) {
+          logs('E', "Failed to allocate memory for request_t", NULL);
+          return -1;
+        }
+
+        if (parse_request(client->in_buffer, client->in_buffer_len,
+                          client->request) == 0) {
+          // Success! The request is parsed.
+          // Reset buffer for the next request
+          client->in_buffer_len = 0;
+          return 0; // Return 0 to trigger state change to WRITING
+        } else {
+          // Parsing failed
+          free_request(client->request);
+          client->request = NULL;
+          return -1;
+        }
+      }
+    }
   }
 }
 
-// ##############################################################################
-// ## response handling
-// ##############################################################################
+/*
+ * RESPONSE HANDLING
+ *
+ */
 
-// Handles partial writes for a generic buffer.
-// Returns 0 on success, 1 on EAGAIN (partial write), -1 on fatal error.
+// core function for writing buffers, handles partial writes
+// returns -1 on failure
+// returns 0 on success
+// returns 1 on EAGAIN (partial write)
 int write_partial(client_t *client, const char *buffer, size_t *offset,
                   size_t len) {
   size_t remaining = len - *offset;
@@ -395,8 +555,10 @@ int write_partial(client_t *client, const char *buffer, size_t *offset,
   return 1;
 }
 
-// sends a file using sendfile()
-// returns 0 on success, 1 on EAGAIN (partial write), -1 on fatal error
+// sends a file conetents using sendfile()
+// returns -1 on failure
+// returns 0 on success
+// returns 1 on EAGAIN (partial write)
 int send_file_body(client_t *client) {
   if (client->file_offset >= client->file_size) {
     return 0;
@@ -414,106 +576,150 @@ int send_file_body(client_t *client) {
   }
 
   if (client->file_offset >= client->file_size) {
+    // clean up if the file is fully sent
+    close(client->file_fd);
+    client->file_fd = -1;
+    client->file_offset = 0;
+    client->file_size = 0;
+    client->headers_sent = false;
     return 0;
   }
   return 1;
 }
 
-// builds an HTTP header string into the provided buffer
-void build_response_headers(char *buffer, size_t buffer_size,
-                            const char *content_type, size_t content_length) {
-  const char *template = "HTTP/1.1 200 OK\r\n"
-                         "Content-Type: %s\r\n"
-                         "Content-Length: %zu\r\n"
-                         "Connection: keep-alive\r\n"
-                         "\r\n";
-  snprintf(buffer, buffer_size, template, content_type, content_length);
-}
+int build_headers(client_t *client, int status_code, const char *status_message,
+                  const char *content_type, size_t content_length) {
+  const char *header_template = "HTTP/1.1 %d %s\r\n"
+                                "Content-Type: %s\r\n"
+                                "Content-Length: %zu\r\n"
+                                "Connection: keep-alive\r\n"
+                                "\r\n";
 
-// handles building and sending a complete response with a small body
-int send_simple_response(client_t *client, const char *body,
-                         const char *content_type) {
-  size_t body_len = strlen(body);
+  // calculate the size required for the headers
+  size_t required_size =
+      snprintf(NULL, 0, header_template, status_code, status_message,
+               content_type, content_length) +
+      1;
 
-  if (client->out_buffer_len == 0) {
-    build_response_headers(client->out_buffer, MAX_BUFFER_SIZE, content_type,
-                           body_len);
-    size_t header_len = strlen(client->out_buffer);
-
-    if (header_len + body_len >= MAX_BUFFER_SIZE) {
-      logs('E', "Response body too large for buffer.", NULL);
+  // allocate or reallocate the buffer
+  if (client->out_buffer == NULL || client->out_buffer_size < required_size) {
+    client->out_buffer_size = required_size;
+    char *temp = realloc(client->out_buffer, client->out_buffer_size);
+    if (temp == NULL) {
+      logs('E', "Failed to reallocate buffer for headers.", NULL);
       return -1;
     }
-
-    memcpy(client->out_buffer + header_len, body, body_len);
-    client->out_buffer_len = header_len + body_len;
-    client->out_buffer_sent = 0;
+    client->out_buffer = temp;
   }
 
-  int write_status =
-      write_partial(client, client->out_buffer, &client->out_buffer_sent,
-                    client->out_buffer_len);
+  // write the headers into the buffer
+  snprintf(client->out_buffer, client->out_buffer_size, header_template,
+           status_code, status_message, content_type, content_length);
+  client->out_buffer_len = strlen(client->out_buffer);
+  client->out_buffer_sent = 0; // reset sent count for new write operation
 
-  if (write_status != 0) {
-    return write_status;
-  }
-
-  client->out_buffer_sent = 0;
-  client->out_buffer_len = 0;
   return 0;
 }
 
-// handles sending a file, first the headers, then the file content
-int send_file_response(client_t *client) {
+// sends headers and dynamic body (non file body)
+// returns -1 on failure
+// returns 0 on success
+// returns 1 on partial write
+int send_headers_and_body(client_t *client) {
+  int status = 1; // default to partial write
+
+  // only build the response if it hasn't been built yet
+  if (client->out_buffer == NULL) {
+    const char *response_body = "Hello World";
+    size_t body_len = strlen(response_body);
+    if (build_headers(client, 200, "OK", "text/plain", body_len) != 0) {
+      return -1;
+    }
+    // append the body to the buffer
+    memcpy(client->out_buffer + client->out_buffer_len, response_body,
+           body_len);
+    client->out_buffer_len += body_len;
+  }
+
+  // write the full response from the buffer
+  status = write_partial(client, client->out_buffer, &client->out_buffer_sent,
+                         client->out_buffer_len);
+
+  // clean up if the entire response has been sent
+  if (status == 0) {
+    free(client->out_buffer);
+    client->out_buffer = NULL;
+    client->out_buffer_len = 0;
+    client->out_buffer_size = 0;
+  }
+  return status;
+}
+
+// sends headers only
+// returns -1 on failure
+// returns 0 on success
+// returns 1 on partial write
+int send_headers_only(client_t *client) {
+  int status = 1; // default to partial write
+
   if (!client->headers_sent) {
-    if (client->out_buffer_len == 0) {
-      build_response_headers(client->out_buffer, MAX_BUFFER_SIZE,
-                             "application/octet-stream", client->file_size);
-      client->out_buffer_len = strlen(client->out_buffer);
+    // build headers for the file response
+    if (client->out_buffer == NULL) {
+      if (build_headers(client, 200, "OK", "application/octet-stream",
+                        client->file_size) != 0) {
+        return -1;
+      }
     }
 
-    int headers_status =
-        write_partial(client, client->out_buffer, &client->out_buffer_sent,
-                      client->out_buffer_len);
-    if (headers_status != 0) {
-      return headers_status;
+    // send headers from the out_buffer because headers get sent separately
+    status = write_partial(client, client->out_buffer, &client->out_buffer_sent,
+                           client->out_buffer_len);
+
+    // if headers are fully sent, free the buffer and mark headers as sent
+    if (status == 0) {
+      client->headers_sent = true;
+      free(client->out_buffer);
+      client->out_buffer = NULL;
+      client->out_buffer_len = 0;
+      client->out_buffer_size = 0;
+      client->out_buffer_sent = 0;
+    } else {
+      // return if headers were only partially sent
+      return status;
     }
-    client->headers_sent = true;
-    client->out_buffer_sent = 0;
   }
 
-  int file_status = send_file_body(client);
-  if (file_status != 0) {
-    return file_status;
-  }
-
-  close(client->file_fd);
-  client->file_fd = -1;
-  client->file_offset = 0;
-  client->file_size = 0;
-  client->headers_sent = false;
-  client->out_buffer_len = 0;
-  return 0;
+  return status;
 }
 
-// main orchestrator function
 int write_client_response(client_t *client) {
-  const char *response_body = "Hello World";
-  const char *content_type = "text/plain";
+  int status = 1; // default to partial write
 
-  // check if there is a file to be sent
-  if (client->file_fd > 0) {
-    return send_file_response(client);
+  // --- handle simple in memory responses ---
+  if (client->file_fd == -1) {
+    status = send_headers_and_body(client);
+    return status;
   }
-  // otherwise, handle a simple body response
-  else {
-    return send_simple_response(client, response_body, content_type);
+
+  // if we're sending a file response, send headers first
+  // if they haven't been sent yet
+  if (!client->headers_sent) {
+    status = send_headers_only(client);
   }
+
+  // if headers have already been sent or are fully sent, send the file
+  if (client->headers_sent || status == 0) {
+    status = send_file_body(client);
+    return status;
+  }
+
+  return status;
 }
 
-// ##############################################################################
-// ## server process handling
-// ##############################################################################
+/*
+ * SERVER PROCESS HANDLING
+ *
+ */
 
 int setup_epoll(int *listen_sockets, int num_sockets) {
   int epoll_fd = epoll_create1(0);
@@ -585,7 +791,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
       if (is_listening_socket) {
         // handle new connection
         if (handle_new_connection(current_fd, epoll_fd, listen_sockets,
-                              &active_connections) == -1) {
+                                  &active_connections) == -1) {
           logs('W', "Server is full. Rejecting connection.", NULL);
         }
       } else {
@@ -598,20 +804,28 @@ void run_worker(int *listen_sockets, int num_sockets) {
           close_connection(client, epoll_fd, &active_connections);
         } else if (events[i].events & EPOLLIN) {
           // it's a read event
-          if (read_client_request(client) == 0) {
+          int read_status = read_client_request(client);
+          if (read_status == 0) {
             // read returns 0, which means success
             // transition epoll event to EPOLLOUT and set state to WRITING
             logs('D', "No more data to read from Client %s", NULL, client->ip);
             transition_state(client, epoll_fd, WRITING);
+          } else if (read_status == 1) {
+            // read returns 1, which means more data is expected, stay in
+            // READING state
+            logs('D', "More data to read from Client %s", NULL, client->ip);
+            continue;
           } else {
             // read returns -1, which means error, so close connection
+            logs('E', "read_client_request() failed. Output: %s", NULL,
+                 read_status);
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
           }
-
         } else if (events[i].events & EPOLLOUT) {
           // it's a write event
-          if (write_client_response(client) == 0) {
+          int write_status = write_client_response(client);
+          if (write_status == 0) {
             // write returns 0, which means success
             // transition epoll event to EPOLLIN and set state to READING
             int keepalive = 1; // obviously would be replaced when we actually
@@ -625,6 +839,8 @@ void run_worker(int *listen_sockets, int num_sockets) {
             }
           } else {
             // write returns -1, which means error, so close connection
+            logs('E', "write_client_response() failed. Output: %s", NULL,
+                 write_status);
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
           }
@@ -737,20 +953,32 @@ void free_client(client_t *client) {
     close(client->file_fd);
   }
 
+  // Free the parsed request data, if it exists
+  free_request(client->request);
+
+  if (client->in_buffer != NULL) {
+    free(client->in_buffer);
+  }
+
+  // Free the output buffer
+  if (client->out_buffer != NULL) {
+    free(client->out_buffer);
+  }
+
   // Free the struct itself
   free(client);
 }
 
 void clear_log_file() {
-    FILE *log_file = fopen("logs.log", "w");
-    if (log_file) {
-        fclose(log_file);
-    }
+  FILE *log_file = fopen("logs.log", "w");
+  if (log_file) {
+    fclose(log_file);
+  }
 }
 
 int main() {
-	clear_log_file();
-	
+  clear_log_file();
+
   logs('I', "Starting server...", NULL);
   signal(SIGINT, sigint_handler);
 
