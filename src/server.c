@@ -625,7 +625,7 @@ int build_headers(client_t *client, int status_code, const char *status_message,
 // returns -1 on failure
 // returns 0 on success
 // returns 1 on partial write
-int send_headers_and_body(client_t *client) {
+int send_nonfile_response_headers_and_body(client_t *client) {
   int status = 1; // default to partial write
 
   // only build the response if it hasn't been built yet
@@ -665,8 +665,8 @@ int send_headers_only(client_t *client) {
   if (!client->headers_sent) {
     // build headers for the file response
     if (client->out_buffer == NULL) {
-      if (build_headers(client, 200, "OK", "application/octet-stream",
-                        client->file_size) != 0) {
+      if (build_headers(client, 200, "OK", "text/html", client->file_size) !=
+          0) {
         return -1;
       }
     }
@@ -692,12 +692,53 @@ int send_headers_only(client_t *client) {
   return status;
 }
 
+int find_file(client_t *client) {
+  char *content_root = "/var/www/";
+  char *requested_path = client->request->request_line.uri;
+  char *path_with_root;
+  asprintf(&path_with_root, "%s%s", content_root, requested_path);
+  char *final_path = realpath(path_with_root, NULL);
+  printf("Trying: %s\n", path_with_root);
+
+  if (final_path == NULL) {
+    printf("Tried: %s and failed.\n", path_with_root);
+    char *extensions[] = {".html", "index.html", ".htx", ".html"};
+    size_t extensions_len = sizeof(extensions) / sizeof(char *);
+
+    for (int i = 0; i < extensions_len; i++) {
+      asprintf(&path_with_root, "%s%s%s", content_root, requested_path,
+               extensions[i]);
+      final_path = realpath(path_with_root, NULL);
+      printf("Trying: %s\n", path_with_root);
+      if (final_path != NULL) {
+        printf("Tried %s and succeeded.\n", final_path);
+        break;
+      } else {
+        printf("Tried %s and failed.\n", path_with_root);
+      }
+    }
+  }
+
+  if (final_path != NULL) {
+    client->file_fd = open(final_path, O_RDONLY);
+    struct stat file_stat;
+    fstat(client->file_fd, &file_stat);
+    client->file_size = file_stat.st_size;
+  } else {
+		return -1;
+	}
+
+  return 0;
+}
+
 int write_client_response(client_t *client) {
   int status = 1; // default to partial write
 
+  find_file(client);
+
   // --- handle simple in memory responses ---
   if (client->file_fd == -1) {
-    status = send_headers_and_body(client);
+    status = send_nonfile_response_headers_and_body(client);
     return status;
   }
 
