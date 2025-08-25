@@ -2,7 +2,7 @@
 #define _CONFIG_H_
 
 // forward declaration to allow for nested pointers
-typedef struct location_config location_config;
+typedef struct route_config route_config;
 typedef struct ssl_config ssl_config;
 typedef struct server_config server_config;
 typedef struct http_config http_config;
@@ -10,8 +10,8 @@ typedef struct config config;
 
 extern config *global_config;
 
-// represents a single location block within a server block
-typedef struct location_config {
+// represents a single route block within a server block
+typedef struct route_config {
   char *uri;           // could be "/" or "/images" or whatever
   char *content_dir;      // overrides the default root directory in server block
   char **index_files;  // overrides the default index files in server block
@@ -27,7 +27,7 @@ typedef struct location_config {
 
   char *etag_header;
   char *expires_header;
-} location_config;
+} route_config;
 
 // represents the ssl config for a server block
 typedef struct ssl_config {
@@ -44,12 +44,12 @@ typedef struct server_config {
   int listen_port;            // port to listen on
   char **server_names;          // array of server names
 	int num_server_names;          // number of server names
-  char *content_dir;             // default root dir for all locations
-  char **index_files;         // default index files for all locations
+  char *content_dir;             // default root dir for all routes
+  char **index_files;         // default index files for all routes
 	int num_index_files;         // number of index files
   ssl_config *ssl;            // ssl config
-  location_config *locations; // array of locations
-  int num_locations;          // number of locations
+  route_config *routes; // array of routes
+  int num_routes;          // number of routes
   int return_status;          // server-level redirects
   char *return_url_text;      // url server-level redirects
 

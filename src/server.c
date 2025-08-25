@@ -703,43 +703,99 @@ int send_headers_only(client_t *client, int status_code,
   return status;
 }
 
+int is_directory(const char *path) {
+    struct stat st;
+    return (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
+}
+
 int find_file(client_t *client) {
-  char *content_root = "/var/www/";
-  char *requested_path = client->request->request_line.uri;
-  char *path_with_root;
-  asprintf(&path_with_root, "%s%s", content_root, requested_path);
-  char *final_path = realpath(path_with_root, NULL);
-  printf("Trying: %s\n", path_with_root);
+  server_config *server = client->parent_server;
+  route_config *matched_route;
 
-  if (final_path == NULL) {
-    printf("Tried: %s and failed.\n", path_with_root);
-    char *extensions[] = {".html", "index.html", ".htx", ".html"};
-    size_t extensions_len = sizeof(extensions) / sizeof(char *);
+  char **index_files;
+  char *fallback_extensions[3] = {".html", ".htm", ".txt"};
+  char *content_dir;
 
-    for (int i = 0; i < extensions_len; i++) {
-      asprintf(&path_with_root, "%s%s%s", content_root, requested_path,
-               extensions[i]);
-      final_path = realpath(path_with_root, NULL);
-      printf("Trying: %s\n", path_with_root);
-      if (final_path != NULL) {
-        printf("Tried %s and succeeded.\n", final_path);
-        break;
-      } else {
-        printf("Tried %s and failed.\n", path_with_root);
-      }
+  char *request_path = client->request->request_line.uri;
+  char *request_path_with_content_dir;
+  char *final_path;
+
+  // find route for this request's URI
+  for (int i = 0; i < server->num_routes; i++) {
+    matched_route = &server->routes[i];
+    if (strcmp(matched_route->uri, client->request->request_line.uri) == 0) {
+      // found a matching route
+      printf("Found matching route for %s\n",
+             client->request->request_line.uri);
+      break;
     }
+  }
 
-    if (final_path == NULL) {
-      asprintf(&path_with_root, "%s/40.html", content_root);
-      final_path = realpath(path_with_root, NULL);
-      printf("Trying: %s\n", path_with_root);
-      if (final_path != NULL) {
-        printf("Tried %s and succeeded.\n", final_path);
-      } else {
-        printf("Tried %s and failed.\n", path_with_root);
+  // get index files for this route
+  if (matched_route != NULL && matched_route->num_index_files != 0) {
+    // index files specified in route, use those
+    index_files = matched_route->index_files;
+  } else if (server->num_index_files != 0) {
+    // no index files specified in route, use server block index files
+    index_files = server->index_files;
+  } else {
+    // no index files specified, should be handled by check_valid_config()
+  }
+
+  // TODO: add fallback extensions to config
+  // get fallback extensions for this route
+
+  // get content directory for this route
+  if (matched_route != NULL && matched_route->content_dir != NULL) {
+    // a specific content directory is defined in the matched route
+    content_dir = matched_route->content_dir;
+    printf("Found specific content dir: %s\n", content_dir);
+  } else if (server->content_dir != NULL) {
+    // a specific route directory, but the server has a default
+    content_dir = server->content_dir;
+    printf("Found default content dir: %s\n", content_dir);
+  } else {
+    // a route or server content directory specified. use hardcoded default
+    content_dir = "/var/www/";
+    printf("Didn't find any content dir. Using hardcoded: %s\n", content_dir);
+  }
+
+  // try first with the request path
+  asprintf(&request_path_with_content_dir, "%s%s", content_dir, request_path);
+  final_path = realpath(request_path_with_content_dir, NULL);
+  printf("Trying: %s\n", request_path_with_content_dir);
+
+	// check if final_path is still not found or is a directory
+	// the directory check is needed because realpath will return a path to a
+  // directory if the path is a directory and will not return NULL
+  if (final_path == NULL || is_directory(final_path)) {
+    // try with the index files if the request path ends with a slash
+    if (request_path[strlen(request_path) - 1] == '/' || is_directory(final_path)) {
+      for (int i = 0; i < server->num_index_files; i++) {
+        asprintf(&final_path, "%s%s", request_path_with_content_dir,
+                 server->index_files[i]);
+        printf("Trying: %s\n", final_path);
+        if (realpath(final_path, NULL) != NULL) {
+					final_path = realpath(final_path, NULL);
+          break;
+        }
+      }
+    } else if (request_path[strlen(request_path) - 1] != '/') {
+      // try with the extension fallbacks if the request path doesn't end with a
+      // slash
+      for (int i = 0; i < 3; i++) {
+        asprintf(&final_path, "%s%s", request_path_with_content_dir,
+                 fallback_extensions[i]);
+        printf("Trying: %s\n", final_path);
+        if (realpath(final_path, NULL) != NULL) {
+					final_path = realpath(final_path, NULL);
+          break;
+        }
       }
     }
   }
+
+	printf("Final path: %s\n", final_path);
 
   if (final_path != NULL) {
     client->file_fd = open(final_path, O_RDONLY);
@@ -747,6 +803,7 @@ int find_file(client_t *client) {
     fstat(client->file_fd, &file_stat);
     client->file_size = file_stat.st_size;
     client->file_path = strdup(final_path);
+    free(final_path); // free the string returned by realpath
     return 0;
   } else {
     return -1;
@@ -766,8 +823,9 @@ int write_client_response(client_t *client) {
           "<!DOCTYPE html><html><head><title>404 Not "
           "Found</title></head><body><h1>404 Not Found</h1><p>The requested "
           "URL was not found on this server.</p></body></html>";
-			size_t body_len = strlen(body);
-      return send_nonfile_response(client, 404, "Not Found", "text/html", body, body_len);
+      size_t body_len = strlen(body);
+      return send_nonfile_response(client, 404, "Not Found", "text/html", body,
+                                   body_len);
     }
   }
 

@@ -126,9 +126,14 @@ void parse_config() {
   parser_state_e state = GLOBAL;
   int num_servers = 0;
   server_config *current_server = NULL;
-  location_config *current_location = NULL;
+  route_config *current_route = NULL;
 
   while (fgets(line, MAX_LINE_LENGTH, file) != NULL) {
+    char *comment_pos = strchr(line, '#');
+    if (comment_pos != NULL) {
+      *comment_pos = '\0'; 
+    }
+
     char *colon_pos = strchr(line, ':');
     char *key = NULL;
     char *value = NULL;
@@ -142,14 +147,14 @@ void parse_config() {
       value = "";
     }
 
-    if (key[0] == '\0' || key[0] == '#') {
+    if (key[0] == '\0') {
       continue;
     }
 
     if (state == GLOBAL) {
-			if (strcmp(key, "max_connections") == 0) {
-				global_config->max_connections = atoi(value);
-			} else if (strcmp(key, "worker_processes") == 0) {
+      if (strcmp(key, "max_connections") == 0) {
+        global_config->max_connections = atoi(value);
+      } else if (strcmp(key, "worker_processes") == 0) {
         global_config->worker_processes = atoi(value);
       } else if (strcmp(key, "user") == 0) {
         global_config->user = strdup(value);
@@ -241,25 +246,24 @@ void parse_config() {
 
         continue;
       } else if (strcmp(key, "route.new") == 0) {
-        // we are now in a location block
+        // we are now in a route block
         state = LOCATION;
-        // increment the number of locations
-        current_server->num_locations++;
+        // increment the number of routes
+        current_server->num_routes++;
 
-        // resize the locations array
-        current_server->locations =
-            realloc(current_server->locations,
-                    sizeof(location_config) * current_server->num_locations);
-        if (current_server->locations == NULL) {
-          logs('E', "Couldn't allocate memory for locations array.",
+        // resize the routes array
+        current_server->routes =
+            realloc(current_server->routes,
+                    sizeof(route_config) * current_server->num_routes);
+        if (current_server->routes == NULL) {
+          logs('E', "Couldn't allocate memory for routes array.",
                "parse_config(): realloc() failed.");
           exits();
         }
 
-        // get a pointer to the current location and initialise it
-        current_location =
-            &current_server->locations[current_server->num_locations - 1];
-        memset(current_location, 0, sizeof(location_config));
+        // get a pointer to the current route and initialise it
+        current_route = &current_server->routes[current_server->num_routes - 1];
+        memset(current_route, 0, sizeof(route_config));
 
         continue;
       } else if (strcmp(key, "host.end") == 0) {
@@ -295,29 +299,29 @@ void parse_config() {
       }
     } else if (state == LOCATION) {
       if (strcmp(key, "uri") == 0) {
-        current_location->uri = strdup(value);
+        current_route->uri = strdup(value);
       } else if (strcmp(key, "content_dir") == 0) {
-        current_location->content_dir = strdup(value);
+        current_route->content_dir = strdup(value);
       } else if (strcmp(key, "index_files") == 0) {
-        current_location->index_files =
-            parse_string_list(value, &current_location->num_index_files);
-        if (current_location->index_files == NULL &&
-            current_location->num_index_files != 0) {
+        current_route->index_files =
+            parse_string_list(value, &current_route->num_index_files);
+        if (current_route->index_files == NULL &&
+            current_route->num_index_files != 0) {
           logs('E', "Couldn't allocate memory for index files.",
                "parse_config() failed.");
           exits();
         }
       } else if (strcmp(key, "proxy_url") == 0) {
-        current_location->proxy_url = strdup(value);
+        current_route->proxy_url = strdup(value);
       } else if (strcmp(key, "autoindex") == 0) {
-        current_location->autoindex = (strcmp(value, "on") == 0);
+        current_route->autoindex = (strcmp(value, "on") == 0);
       } else if (strcmp(key, "allowed_ips") == 0) {
         // TODO: handle CIDR notation
         // TODO: maybe read it from a file?
-        current_location->allowed_ips =
-            parse_string_list(value, &current_location->num_allowed_ips);
-        if (current_location->allowed_ips == NULL &&
-            current_location->num_allowed_ips != 0) {
+        current_route->allowed_ips =
+            parse_string_list(value, &current_route->num_allowed_ips);
+        if (current_route->allowed_ips == NULL &&
+            current_route->num_allowed_ips != 0) {
           logs('E', "Couldn't allocate memory for allowed ips.",
                "parse_config() failed.");
           exits();
@@ -325,22 +329,22 @@ void parse_config() {
       } else if (strcmp(key, "denied_ips") == 0) {
         // TODO: handle CIDR notation
         // TODO: maybe read it from a file?
-        current_location->denied_ips =
-            parse_string_list(value, &current_location->num_denied_ips);
-        if (current_location->denied_ips == NULL &&
-            current_location->num_denied_ips != 0) {
+        current_route->denied_ips =
+            parse_string_list(value, &current_route->num_denied_ips);
+        if (current_route->denied_ips == NULL &&
+            current_route->num_denied_ips != 0) {
           logs('E', "Couldn't allocate memory for denied ips.",
                "parse_config() failed.");
           exits();
         }
       } else if (strcmp(key, "return_status") == 0) {
-        current_location->return_status = atoi(value);
+        current_route->return_status = atoi(value);
       } else if (strcmp(key, "return_url_text") == 0) {
-        current_location->return_url_text = strdup(value);
+        current_route->return_url_text = strdup(value);
       } else if (strcmp(key, "etag_header") == 0) {
-        current_location->etag_header = strdup(value);
+        current_route->etag_header = strdup(value);
       } else if (strcmp(key, "expires_header") == 0) {
-        current_location->expires_header = strdup(value);
+        current_route->expires_header = strdup(value);
       } else if (strcmp(key, "route.end") == 0) {
         state = SERVER;
         continue;
@@ -448,56 +452,56 @@ void free_config() {
           free(server->ssl);
         }
 
-        // Free each location configuration and its contents
-        if (server->locations) {
-          for (int j = 0; j < server->num_locations; j++) {
-            location_config *location = &server->locations[j];
+        // Free each route configuration and its contents
+        if (server->routes) {
+          for (int j = 0; j < server->num_routes; j++) {
+            route_config *route = &server->routes[j];
 
-            // Free location-specific strings and string lists
-            if (location->uri)
-              free(location->uri);
-            if (location->content_dir)
-              free(location->content_dir);
-            if (location->proxy_url)
-              free(location->proxy_url);
-            if (location->return_url_text)
-              free(location->return_url_text);
-            if (location->etag_header)
-              free(location->etag_header);
-            if (location->expires_header)
-              free(location->expires_header);
+            // Free route-specific strings and string lists
+            if (route->uri)
+              free(route->uri);
+            if (route->content_dir)
+              free(route->content_dir);
+            if (route->proxy_url)
+              free(route->proxy_url);
+            if (route->return_url_text)
+              free(route->return_url_text);
+            if (route->etag_header)
+              free(route->etag_header);
+            if (route->expires_header)
+              free(route->expires_header);
 
             // Free index files string list
-            if (location->index_files) {
-              for (int k = 0; k < location->num_index_files; k++) {
-                if (location->index_files[k]) {
-                  free(location->index_files[k]);
+            if (route->index_files) {
+              for (int k = 0; k < route->num_index_files; k++) {
+                if (route->index_files[k]) {
+                  free(route->index_files[k]);
                 }
               }
-              free(location->index_files);
+              free(route->index_files);
             }
 
             // Free allowed IPs string list
-            if (location->allowed_ips) {
-              for (int k = 0; k < location->num_allowed_ips; k++) {
-                if (location->allowed_ips[k]) {
-                  free(location->allowed_ips[k]);
+            if (route->allowed_ips) {
+              for (int k = 0; k < route->num_allowed_ips; k++) {
+                if (route->allowed_ips[k]) {
+                  free(route->allowed_ips[k]);
                 }
               }
-              free(location->allowed_ips);
+              free(route->allowed_ips);
             }
 
             // Free denied IPs string list
-            if (location->denied_ips) {
-              for (int k = 0; k < location->num_denied_ips; k++) {
-                if (location->denied_ips[k]) {
-                  free(location->denied_ips[k]);
+            if (route->denied_ips) {
+              for (int k = 0; k < route->num_denied_ips; k++) {
+                if (route->denied_ips[k]) {
+                  free(route->denied_ips[k]);
                 }
               }
-              free(location->denied_ips);
+              free(route->denied_ips);
             }
           }
-          free(server->locations);
+          free(server->routes);
         }
       }
       free(global_config->http->servers);
