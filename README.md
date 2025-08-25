@@ -12,18 +12,18 @@
 - ✅ Support for keep-alive connections.
 - ✅ Basic Logging and monitoring with customisable access and error logs.
 - ✅ Easy to use compact configuration system with flexible syntax.
+- ✅ Support for virtual hosts (multiple domains on one server).
+- ✅ Routing engine supporting URL rewriting and redirection, fallback files, and aliasing.
+- ✅ Fast and efficient zero-copy static file serving with full MIME type support and directory indexing.
 
 ---
 
 - ❌ Support for HTTPS/TLS encryption.
 - ❌ Implementation of the HTTP protocol with request parsing and response generation.
-- ❌ Fast and efficient zero-copy static file serving with full MIME type support and directory indexing.
-- ❌ Routing engine supporting URL rewriting and redirection, fallback files, and aliasing.
 - ❌ Reverse proxying to upstream backend servers.  
 - ❌ Advanced configuration support for environment variables and dynamic reloads without downtime.
 - ❌ Security features including access control, hidden file protection, and IP address filtering.
 - ❌ HTTP/2 support with pipelining and request multiplexing.
-- ❌ Support for virtual hosts (multiple domains on one server).
 - ❌ Support for HTTP caching headers, ETags, and conditional GET requests. 
 - ❌ Compression support with gzip and brotli to optimise bandwidth usage.
 - ❌ Modular and extensible architecture with support for custom plugins and extensions.
