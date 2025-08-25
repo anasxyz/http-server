@@ -92,6 +92,7 @@ typedef struct {
 
   // fields for sending files
   int file_fd;
+  char *file_path;
   off_t file_offset;
   off_t file_size;
 
@@ -625,32 +626,45 @@ int build_headers(client_t *client, int status_code, const char *status_message,
 // returns -1 on failure
 // returns 0 on success
 // returns 1 on partial write
-int send_nonfile_response_headers_and_body(client_t *client) {
-  int status = 1; // default to partial write
+// Corrected and refactored send_nonfile_response function
+int send_nonfile_response(client_t *client, int status_code,
+                          const char *status_message, const char *content_type,
+                          const char *body, size_t body_len) {
+  int status;
 
-  // only build the response if it hasn't been built yet
+  // If the buffer is not yet allocated, build the full response in memory.
+  // This handles the case where the function is called for the first time.
   if (client->out_buffer == NULL) {
-    const char *response_body = "Hello World";
-    size_t body_len = strlen(response_body);
-    if (build_headers(client, 200, "OK", "text/plain", body_len) != 0) {
+    if (build_headers(client, status_code, status_message, content_type,
+                      body_len) != 0) {
+      return -1; // Header build failed
+    }
+
+    // Allocate space for the body and append it to the buffer.
+    size_t new_size = client->out_buffer_len + body_len + 1;
+    char *temp = realloc(client->out_buffer, new_size);
+    if (temp == NULL) {
+      logs('E', "Failed to reallocate buffer for non-file response.", NULL);
       return -1;
     }
-    // append the body to the buffer
-    memcpy(client->out_buffer + client->out_buffer_len, response_body,
-           body_len);
+    client->out_buffer = temp;
+    client->out_buffer_size = new_size;
+    memcpy(client->out_buffer + client->out_buffer_len, body, body_len);
     client->out_buffer_len += body_len;
+    client->out_buffer[client->out_buffer_len] = '\0';
   }
 
-  // write the full response from the buffer
+  // Use write_partial to send the entire constructed buffer.
   status = write_partial(client, client->out_buffer, &client->out_buffer_sent,
                          client->out_buffer_len);
 
-  // clean up if the entire response has been sent
+  // Clean up if the entire response has been sent.
   if (status == 0) {
     free(client->out_buffer);
     client->out_buffer = NULL;
     client->out_buffer_len = 0;
     client->out_buffer_size = 0;
+    client->out_buffer_sent = 0;
   }
   return status;
 }
@@ -659,23 +673,21 @@ int send_nonfile_response_headers_and_body(client_t *client) {
 // returns -1 on failure
 // returns 0 on success
 // returns 1 on partial write
-int send_headers_only(client_t *client) {
-  int status = 1; // default to partial write
+int send_headers_only(client_t *client, int status_code,
+                      const char *status_message, const char *content_type,
+                      size_t content_length) {
+  int status = 1;
 
   if (!client->headers_sent) {
-    // build headers for the file response
     if (client->out_buffer == NULL) {
-      if (build_headers(client, 200, "OK", "text/html", client->file_size) !=
-          0) {
+      if (build_headers(client, status_code, status_message, content_type,
+                        content_length) != 0) {
         return -1;
       }
     }
-
-    // send headers from the out_buffer because headers get sent separately
     status = write_partial(client, client->out_buffer, &client->out_buffer_sent,
                            client->out_buffer_len);
 
-    // if headers are fully sent, free the buffer and mark headers as sent
     if (status == 0) {
       client->headers_sent = true;
       free(client->out_buffer);
@@ -684,7 +696,6 @@ int send_headers_only(client_t *client) {
       client->out_buffer_size = 0;
       client->out_buffer_sent = 0;
     } else {
-      // return if headers were only partially sent
       return status;
     }
   }
@@ -717,6 +728,17 @@ int find_file(client_t *client) {
         printf("Tried %s and failed.\n", path_with_root);
       }
     }
+
+    if (final_path == NULL) {
+      asprintf(&path_with_root, "%s/40.html", content_root);
+      final_path = realpath(path_with_root, NULL);
+      printf("Trying: %s\n", path_with_root);
+      if (final_path != NULL) {
+        printf("Tried %s and succeeded.\n", final_path);
+      } else {
+        printf("Tried %s and failed.\n", path_with_root);
+      }
+    }
   }
 
   if (final_path != NULL) {
@@ -724,36 +746,41 @@ int find_file(client_t *client) {
     struct stat file_stat;
     fstat(client->file_fd, &file_stat);
     client->file_size = file_stat.st_size;
+    client->file_path = strdup(final_path);
+    return 0;
   } else {
-		return -1;
-	}
-
-  return 0;
+    return -1;
+  }
 }
 
 int write_client_response(client_t *client) {
-  int status = 1; // default to partial write
+  int status = 1;
 
-  find_file(client);
-
-  // --- handle simple in memory responses ---
+  // check if the request is for a file
   if (client->file_fd == -1) {
-    status = send_nonfile_response_headers_and_body(client);
-    return status;
+    int find_file_status = find_file(client);
+
+    if (find_file_status == -1) {
+      // file not found and fallback not found, send a manual 404 response
+      const char *body =
+          "<!DOCTYPE html><html><head><title>404 Not "
+          "Found</title></head><body><h1>404 Not Found</h1><p>The requested "
+          "URL was not found on this server.</p></body></html>";
+			size_t body_len = strlen(body);
+      return send_nonfile_response(client, 404, "Not Found", "text/html", body, body_len);
+    }
   }
 
-  // if we're sending a file response, send headers first
-  // if they haven't been sent yet
+  // ff a file was found (file_fd != -1), send the file response
   if (!client->headers_sent) {
-    status = send_headers_only(client);
+    status =
+        send_headers_only(client, 200, "OK", "text/html", client->file_size);
+    if (status == 1) {
+      return status;
+    }
   }
 
-  // if headers have already been sent or are fully sent, send the file
-  if (client->headers_sent || status == 0) {
-    status = send_file_body(client);
-    return status;
-  }
-
+  status = send_file_body(client);
   return status;
 }
 
