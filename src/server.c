@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "mime.h"
 #include "util.h"
 
 #define MAX_EVENTS 1024
@@ -99,7 +100,6 @@ typedef struct {
   server_config *parent_server; // pointer to parent server config
 
   request_t *request;
-  response_t *response;
 } client_t;
 
 // forward declarations of all functions in this file
@@ -121,6 +121,7 @@ int build_headers(client_t *client, int status_code, const char *status_message,
                   const char *content_type, size_t content_length);
 
 void free_client(client_t *client);
+void free_request(request_t *request);
 
 /*
  * STATE MACHINE
@@ -331,28 +332,6 @@ void close_connection(client_t *client, int epoll_fd, int *active_connections) {
  * REQUEST HANDLING
  *
  */
-
-void free_request(request_t *request) {
-  if (request == NULL) {
-    return;
-  }
-
-  // Free the dynamically allocated strings for the request line
-  free(request->request_line.method);
-  free(request->request_line.uri);
-  free(request->request_line.version);
-
-  // The GHashTable's destroy function will free its own keys and values
-  if (request->headers != NULL) {
-    g_hash_table_destroy(request->headers);
-  }
-
-  // Free the request body, if it exists
-  free(request->body);
-
-  // Finally, free the request struct itself
-  free(request);
-}
 
 // helper function to find a newline sequence
 char *find_newline(char *buffer, size_t len) {
@@ -704,8 +683,8 @@ int send_headers_only(client_t *client, int status_code,
 }
 
 int is_directory(const char *path) {
-    struct stat st;
-    return (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
+  struct stat st;
+  return (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
 }
 
 int find_file(client_t *client) {
@@ -765,18 +744,19 @@ int find_file(client_t *client) {
   final_path = realpath(request_path_with_content_dir, NULL);
   printf("Trying: %s\n", request_path_with_content_dir);
 
-	// check if final_path is still not found or is a directory
-	// the directory check is needed because realpath will return a path to a
+  // check if final_path is still not found or is a directory
+  // the directory check is needed because realpath will return a path to a
   // directory if the path is a directory and will not return NULL
   if (final_path == NULL || is_directory(final_path)) {
     // try with the index files if the request path ends with a slash
-    if (request_path[strlen(request_path) - 1] == '/' || is_directory(final_path)) {
+    if (request_path[strlen(request_path) - 1] == '/' ||
+        is_directory(final_path)) {
       for (int i = 0; i < server->num_index_files; i++) {
         asprintf(&final_path, "%s%s", request_path_with_content_dir,
                  server->index_files[i]);
         printf("Trying: %s\n", final_path);
         if (realpath(final_path, NULL) != NULL) {
-					final_path = realpath(final_path, NULL);
+          final_path = realpath(final_path, NULL);
           break;
         }
       }
@@ -788,14 +768,14 @@ int find_file(client_t *client) {
                  fallback_extensions[i]);
         printf("Trying: %s\n", final_path);
         if (realpath(final_path, NULL) != NULL) {
-					final_path = realpath(final_path, NULL);
+          final_path = realpath(final_path, NULL);
           break;
         }
       }
     }
   }
 
-	printf("Final path: %s\n", final_path);
+  printf("Final path: %s\n", final_path);
 
   if (final_path != NULL) {
     client->file_fd = open(final_path, O_RDONLY);
@@ -803,7 +783,9 @@ int find_file(client_t *client) {
     fstat(client->file_fd, &file_stat);
     client->file_size = file_stat.st_size;
     client->file_path = strdup(final_path);
-    free(final_path); // free the string returned by realpath
+
+		if (request_path_with_content_dir != NULL) free(request_path_with_content_dir);
+		if (final_path != NULL) free(final_path); // free the string returned by realpath
     return 0;
   } else {
     return -1;
@@ -831,8 +813,8 @@ int write_client_response(client_t *client) {
 
   // ff a file was found (file_fd != -1), send the file response
   if (!client->headers_sent) {
-    status =
-        send_headers_only(client, 200, "OK", "text/html", client->file_size);
+    const char *mime_type = get_mime_type(client->file_path);
+    status = send_headers_only(client, 200, "OK", mime_type, client->file_size);
     if (status == 1) {
       return status;
     }
@@ -981,6 +963,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
   close(epoll_fd);
   g_hash_table_destroy(client_map);
   atexit(free_config);
+	atexit(free_mime_types);
   munmap(total_connections, sizeof(atomic_int));
   exit(0);
 }
@@ -1015,7 +998,7 @@ void fork_workers(int *listen_sockets) {
   }
 }
 
-void server_cleanup(int *listen_sockets) {
+void sock_pcs_cleanup(int *listen_sockets) {
   // master process waits for all childen to finish
   // TODO: handle signals
   for (int i = 0; i < global_config->worker_processes; i++) {
@@ -1066,33 +1049,45 @@ void check_valid_config() {
   }
 }
 
+void frees(void *ptr) {
+  if (ptr != NULL) {
+		free(ptr);
+	}
+}
+
+void free_request(request_t *request) {
+  if (request == NULL) {
+    return;
+  }
+
+  frees(request->request_line.method);
+  frees(request->request_line.uri);
+  frees(request->request_line.version);
+
+  if (request->headers != NULL) {
+    g_hash_table_destroy(request->headers);
+  }
+
+  frees(request->body);
+  frees(request);
+}
+
+
 void free_client(client_t *client) {
   if (client == NULL) {
     return;
   }
 
-  // Free dynamically allocated string
-  free(client->ip);
+  frees(client->ip);
+	frees(client->in_buffer);
+	frees(client->out_buffer);
 
-  // Close the file descriptor for the file being served, if it's open
   if (client->file_fd != -1) {
     close(client->file_fd);
   }
 
-  // Free the parsed request data, if it exists
   free_request(client->request);
-
-  if (client->in_buffer != NULL) {
-    free(client->in_buffer);
-  }
-
-  // Free the output buffer
-  if (client->out_buffer != NULL) {
-    free(client->out_buffer);
-  }
-
-  // Free the struct itself
-  free(client);
+  frees(client);
 }
 
 void clear_log_file() {
@@ -1125,8 +1120,9 @@ int main() {
 
   atomic_store(total_connections, 0);
 
-  // 1. load config
+  // 1. load config and mime types
   load_config();
+  load_mime_types(global_config->http->mime_types_path);
 
   // 2. check if config is valid
   check_valid_config();
@@ -1141,10 +1137,11 @@ int main() {
   fork_workers(listen_sockets);
 
   // 6. clean up server resources
-  server_cleanup(listen_sockets);
+  sock_pcs_cleanup(listen_sockets);
 
   // 7. free_config at exit for master process
   atexit(free_config);
+	atexit(free_mime_types);
   shm_unlink(shm_name);
   logs('I', "Server exiting.", NULL);
 
