@@ -758,7 +758,9 @@ int find_file(client_t *client) {
         if (realpath(final_path, NULL) != NULL) {
           final_path = realpath(final_path, NULL);
           break;
-        }
+        } else {
+					final_path = NULL;
+				}
       }
     } else if (request_path[strlen(request_path) - 1] != '/') {
       // try with the extension fallbacks if the request path doesn't end with a
@@ -770,7 +772,9 @@ int find_file(client_t *client) {
         if (realpath(final_path, NULL) != NULL) {
           final_path = realpath(final_path, NULL);
           break;
-        }
+        } else {
+					final_path = NULL;
+				}
       }
     }
   }
