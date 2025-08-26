@@ -151,7 +151,7 @@ void transition_state(client_t *client, int epoll_fd, state_e new_state) {
 
   // Handle epoll modifications based on the transition
   if (current_state == READING && new_state == WRITING) {
-    if (set_epoll(epoll_fd, client, EPOLLOUT) == -1) {
+    if (set_epoll(epoll_fd, client, EPOLLIN | EPOLLOUT) == -1) {
       return;
     }
   } else if (current_state == WRITING && new_state == READING) {
@@ -784,8 +784,10 @@ int find_file(client_t *client) {
     client->file_size = file_stat.st_size;
     client->file_path = strdup(final_path);
 
-		if (request_path_with_content_dir != NULL) free(request_path_with_content_dir);
-		if (final_path != NULL) free(final_path); // free the string returned by realpath
+    if (request_path_with_content_dir != NULL)
+      free(request_path_with_content_dir);
+    if (final_path != NULL)
+      free(final_path); // free the string returned by realpath
     return 0;
   } else {
     return -1;
@@ -907,37 +909,47 @@ void run_worker(int *listen_sockets, int num_sockets) {
         client_t *client = (client_t *)g_hash_table_lookup(
             client_map, GINT_TO_POINTER(current_fd));
 
+        // Check for hang-up, error, or read-shutdown events first
         if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
           transition_state(client, epoll_fd, CLOSING);
           close_connection(client, epoll_fd, &active_connections);
-        } else if (events[i].events & EPOLLIN) {
-          // it's a read event
+          continue; // Move to the next event
+        }
+
+        // Handle read event (EPOLLIN)
+        if (events[i].events & EPOLLIN) {
+          // It's a read event, or both read and write events
           int read_status = read_client_request(client);
           if (read_status == 0) {
             // read returns 0, which means success
             // transition epoll event to EPOLLOUT and set state to WRITING
             logs('D', "No more data to read from Client %s", NULL, client->ip);
+            // transition_state will now include EPOLLOUT AND EPOLLIN
             transition_state(client, epoll_fd, WRITING);
           } else if (read_status == 1) {
             // read returns 1, which means more data is expected, stay in
             // READING state
             logs('D', "More data to read from Client %s", NULL, client->ip);
+            // Stay in a state where we're expecting more reads
             continue;
           } else {
             // read returns -1, which means error, so close connection
-            logs('E', "read_client_request() failed. Output: %s", NULL,
+            logs('E', "read_client_request() failed. Output: %d", NULL,
                  read_status);
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
+            continue;
           }
-        } else if (events[i].events & EPOLLOUT) {
-          // it's a write event
+        }
+
+        // Handle write event (EPOLLOUT)
+        if (events[i].events & EPOLLOUT) {
+          // It's a write event. This could be in the middle of a partial write.
           int write_status = write_client_response(client);
           if (write_status == 0) {
-            // write returns 0, which means success
+            // write returns 0, which means success, all data written
             // transition epoll event to EPOLLIN and set state to READING
-            int keepalive = 1; // obviously would be replaced when we actually
-                               // pase the keep-alive header
+            int keepalive = 1; // dummy value for logic
             logs('D', "No more data to write to Client %s", NULL, client->ip);
             if (keepalive == 1) {
               transition_state(client, epoll_fd, READING);
@@ -945,16 +957,21 @@ void run_worker(int *listen_sockets, int num_sockets) {
               transition_state(client, epoll_fd, CLOSING);
               close_connection(client, epoll_fd, &active_connections);
             }
+          } else if (write_status == 1) {
+            // write returns 1, which means more data is expected.
+            // Stay in the WRITING state to continue writing later.
+            // The epoll_ctl for WRITING state should already be set to EPOLLIN
+            // | EPOLLOUT.
+            logs('D', "Partial write to Client %s", NULL, client->ip);
+            continue;
           } else {
             // write returns -1, which means error, so close connection
-            logs('E', "write_client_response() failed. Output: %s", NULL,
+            logs('E', "write_client_response() failed. Output: %d", NULL,
                  write_status);
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
+            continue;
           }
-        } else {
-          logs('E', "Unexpected event on socket %d", NULL, current_fd);
-          close_connection(client, epoll_fd, &active_connections);
         }
       }
     }
@@ -963,7 +980,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
   close(epoll_fd);
   g_hash_table_destroy(client_map);
   atexit(free_config);
-	atexit(free_mime_types);
+  atexit(free_mime_types);
   munmap(total_connections, sizeof(atomic_int));
   exit(0);
 }
@@ -1051,8 +1068,8 @@ void check_valid_config() {
 
 void frees(void *ptr) {
   if (ptr != NULL) {
-		free(ptr);
-	}
+    free(ptr);
+  }
 }
 
 void free_request(request_t *request) {
@@ -1072,15 +1089,14 @@ void free_request(request_t *request) {
   frees(request);
 }
 
-
 void free_client(client_t *client) {
   if (client == NULL) {
     return;
   }
 
   frees(client->ip);
-	frees(client->in_buffer);
-	frees(client->out_buffer);
+  frees(client->in_buffer);
+  frees(client->out_buffer);
 
   if (client->file_fd != -1) {
     close(client->file_fd);
@@ -1141,7 +1157,7 @@ int main() {
 
   // 7. free_config at exit for master process
   atexit(free_config);
-	atexit(free_mime_types);
+  atexit(free_mime_types);
   shm_unlink(shm_name);
   logs('I', "Server exiting.", NULL);
 
