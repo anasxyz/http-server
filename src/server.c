@@ -331,7 +331,9 @@ void close_connection(client_t *client, int epoll_fd, int *active_connections) {
  *
  */
 
-// helper function to find a newline sequence
+// helper function to find a newline sequence in a buffer.
+// returns a pointer to the newline sequence if found.
+// returns NULL if not found.
 char *find_newline(char *buffer, size_t len) {
   for (size_t i = 0; i < len; ++i) {
     if (buffer[i] == '\r' && (i + 1) < len && buffer[i + 1] == '\n') {
@@ -340,6 +342,10 @@ char *find_newline(char *buffer, size_t len) {
   }
   return NULL;
 }
+
+// parses raw request from buffer into request_t struct.
+// returns 0 on success.
+// returns -1 on failure.
 int parse_request(char *buffer, size_t buffer_len, request_t *request) {
   char *current_pos = buffer;
   char *end_of_line;
@@ -411,6 +417,65 @@ int parse_request(char *buffer, size_t buffer_len, request_t *request) {
   return 0;
 }
 
+// reads data from client's socket in non blocking manner.
+// returns number of bytes read on success.
+// returns -1 for partial read.
+// returns -2 if client closed connection.
+// returns -3 for fatal read error.
+static ssize_t reads(client_t *client, char *buffer) {
+  ssize_t bytes_read = read(client->fd, buffer, MAX_BUFFER_SIZE);
+
+  if (bytes_read == 0) {
+    return -2; // distinct value for client closed connection
+  }
+  if (bytes_read == -1) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return -1; // no more data to be read for now
+    }
+    return -3; // real error
+  }
+  return bytes_read;
+}
+
+// appends new data to client's dynamic input buffer.
+// returns 0 on success.
+// returns -1 on failure.
+static int append_to_buffer(client_t *client, const char *data, size_t len) {
+  // allocate memory if it's the first read
+  if (client->in_buffer == NULL) {
+    client->in_buffer_size = len + 1;
+    client->in_buffer = malloc(client->in_buffer_size);
+    if (client->in_buffer == NULL) {
+      logs('E', "Failed to allocate memory for input buffer", NULL);
+      return -1;
+    }
+  } else {
+    // if the current buffer isn't large enough to hold the new data, realloc
+    // it
+    if (client->in_buffer_len + len + 1 > client->in_buffer_size) {
+      client->in_buffer_size = client->in_buffer_len + len + 1;
+      char *temp = realloc(client->in_buffer, client->in_buffer_size);
+      if (temp == NULL) {
+        logs('E', "Failed to reallocate memory for input buffer", NULL);
+        return -1;
+      }
+      client->in_buffer = temp;
+    }
+  }
+
+  // copy new data into buffer and null terminate
+  memcpy(client->in_buffer + client->in_buffer_len, data, len);
+  client->in_buffer_len += len;
+  client->in_buffer[client->in_buffer_len] = '\0';
+
+  return 0;
+}
+
+// main orchestrator function for reading and parsing client request into
+// complete request_t struct.
+// returns 0 on success.
+// returns -1 on partial read from reads().
+// returns -1 on failure or client disconnect.
 int read_client_request(client_t *client) {
   char temp_buffer[MAX_BUFFER_SIZE];
   ssize_t bytes_read;
@@ -418,53 +483,30 @@ int read_client_request(client_t *client) {
   size_t body_len = 0;
 
   while (1) {
-    bytes_read = read(client->fd, temp_buffer, MAX_BUFFER_SIZE);
+    bytes_read = reads(client, temp_buffer);
 
-    if (bytes_read == 0) {
-      return -1; // Client closed connection
+    if (bytes_read == -2)
+      // client closed connection
+      return -1;
+    if (bytes_read == -3)
+      // read error
+      return -1;
+    if (bytes_read == -1)
+      // no data to read for now
+      return 1;
+    if (append_to_buffer(client, temp_buffer, bytes_read) != 0) {
+      // buffer allocation error
+      return -1;
     }
 
-    if (bytes_read == -1) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        // No more data to read for now, so return 1 to not change state
-        return 1;
-      }
-      return -1; // A real error
-    }
-
-    // Allocate memory for in_buffer if it's the first read
-    if (client->in_buffer == NULL) {
-      client->in_buffer_size = bytes_read;
-      client->in_buffer = malloc(client->in_buffer_size + 1);
-      if (client->in_buffer == NULL) {
-        logs('E', "Failed to allocate memory for input buffer", NULL);
-        return -1;
-      }
-    } else {
-      // Reallocate memory for larger requests
-      if (client->in_buffer_len + bytes_read + 1 > client->in_buffer_size) {
-        client->in_buffer_size = client->in_buffer_len + bytes_read + 1;
-        char *temp = realloc(client->in_buffer, client->in_buffer_size);
-        if (temp == NULL) {
-          logs('E', "Failed to reallocate memory for input buffer", NULL);
-          return -1;
-        }
-        client->in_buffer = temp;
-      }
-    }
-
-    // Copy new data to client's buffer
-    memcpy(client->in_buffer + client->in_buffer_len, temp_buffer, bytes_read);
-    client->in_buffer_len += bytes_read;
-    client->in_buffer[client->in_buffer_len] = '\0';
-
-    // Check if we have received a complete request
+    // check if received complete request
     char *end_of_headers = strstr(client->in_buffer, "\r\n\r\n");
     if (end_of_headers) {
+      // if found end of headers, calculate length and check if body exists
       if (headers_len == 0) {
         headers_len = (end_of_headers - client->in_buffer) + 4;
 
-        // Search for Content-Length header to determine body size
+        // search for content length header to determine size of request body
         char *content_length_header =
             strstr(client->in_buffer, "Content-Length:");
         if (content_length_header) {
@@ -473,9 +515,9 @@ int read_client_request(client_t *client) {
         }
       }
 
-      // Check if the entire request (headers + body) has been received
+      // a request is complete when the total length of the received data
+      // (headers + body) matches or exceeds the expected total length
       if (client->in_buffer_len >= headers_len + body_len) {
-        // A complete request is now in the buffer
         client->request = malloc(sizeof(request_t));
         if (client->request == NULL) {
           logs('E', "Failed to allocate memory for request_t", NULL);
@@ -484,12 +526,13 @@ int read_client_request(client_t *client) {
 
         if (parse_request(client->in_buffer, client->in_buffer_len,
                           client->request) == 0) {
-          // Success! The request is parsed.
-          // Reset buffer for the next request
+          // !!!
+          // successfully parsed request
+          // !!!
           client->in_buffer_len = 0;
-          return 0; // Return 0 to trigger state change to WRITING
+          // return 0 to trigger state change to WRITING
+          return 0;
         } else {
-          // Parsing failed
           free_request(client->request);
           client->request = NULL;
           return -1;
@@ -714,8 +757,9 @@ static int send_file_with_sendfile(client_t *client) {
   return 0;
 }
 
+//
 static int send_file_with_writes(client_t *client) {
-  char buffer[4096];
+  char buffer[MAX_BUFFER_SIZE];
   size_t remaining = client->file_size - client->file_offset;
   size_t to_read = (remaining > sizeof(buffer)) ? sizeof(buffer) : remaining;
 
@@ -744,11 +788,19 @@ static int send_file_with_writes(client_t *client) {
 }
 
 int send_file(client_t *client, bool use_sendfile) {
+  // if the file is fully sent, close it and reset fields
   if (client->file_offset >= client->file_size) {
-    return 0;
+    close(client->file_fd);
+    client->file_fd = -1;
+    client->file_offset = 0;
+    client->file_size = 0;
+    client->headers_sent = false;
   }
 
   int status;
+
+  // if sendfile is enabled, use sendfile() to send the file
+  // if sendfile is disabled, use writes() to send the file
   if (use_sendfile) {
     status = send_file_with_sendfile(client);
   } else {
@@ -772,9 +824,9 @@ int send_file(client_t *client, bool use_sendfile) {
 }
 
 int send_body(client_t *client, const char *body, size_t body_len) {
-  // If the body hasn't been loaded into the buffer yet
+  // if the body hasn't been loaded into the buffer yet
   if (client->out_buffer == NULL) {
-    // Allocate space for the new body content
+    // allocate or reallocate space for the new body content
     client->out_buffer_len = body_len;
     char *temp = realloc(client->out_buffer, client->out_buffer_len);
     if (temp == NULL) {
@@ -783,18 +835,18 @@ int send_body(client_t *client, const char *body, size_t body_len) {
     }
     client->out_buffer = temp;
 
-    // Copy the body string into the buffer
+    // copy the body string into the buffer
     memcpy(client->out_buffer, body, body_len);
     client->out_buffer_sent = 0;
   }
 
-  // Now, send the data from the buffer
+  // send the data from the buffer
   int write_status = writes(client, client->out_buffer,
                             &client->out_buffer_sent, client->out_buffer_len);
 
   if (write_status == 0) {
-    // Full body sent successfully
-    // Reset the out_buffer for the next use
+    // full body sent successfully
+    // reset the out_buffer for the next use
     free(client->out_buffer);
     client->out_buffer = NULL;
     client->out_buffer_len = 0;
@@ -804,32 +856,38 @@ int send_body(client_t *client, const char *body, size_t body_len) {
   return write_status;
 }
 
+// main orchestrator function for writing client responses
 int write_client_response(client_t *client) {
   int status = 1;
-  bool serve_file = true;
+  bool serve_file = false;
 
   if (serve_file) {
-    // check if the request is for a file
+    // check if fild is already known
     if (client->file_fd == -1) {
       int find_file_status = find_file(client);
     }
 
-    // if a file was found (file_fd != -1), send the file response
+    // get mime type for file
+    const char *mime_type = get_mime_type(client->file_path);
+
+    // check if headers were already sent
     if (!client->headers_sent) {
-      const char *mime_type = get_mime_type(client->file_path);
       status = send_headers(client, 200, "OK", mime_type, client->file_size);
       if (status == 1) {
         return status;
       }
     }
 
+    // send file with preferred method (sendfile or write)
     status = send_file(client, false);
+
     return status;
   } else {
+    // if not serving file, send simple response
     const char *body = "Hello, world!";
     size_t body_len = strlen(body);
 
-    // First, send the headers
+    // check if headers were already sent
     if (!client->headers_sent) {
       status = send_headers(client, 200, "OK", "text/plain", body_len);
       if (status != 0) {
@@ -837,12 +895,12 @@ int write_client_response(client_t *client) {
       }
     }
 
-    // Then, send the body
+    // send the body
     status = send_body(client, body, body_len);
 
     if (status == 0) {
-      // Full response (headers + body) is complete.
-      // Reset the client for the next request.
+      // full response (headers + body) is complete
+      // reset client for the next request.
       client->headers_sent = false;
     }
 
