@@ -701,70 +701,74 @@ int send_headers(client_t *client, int status_code, const char *status_message,
   return send_header_status;
 }
 
+static int send_file_with_sendfile(client_t *client) {
+  ssize_t bytes_sent =
+      sendfile(client->fd, client->file_fd, &client->file_offset,
+               client->file_size - client->file_offset);
+  if (bytes_sent < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return 1;
+    }
+    return -1;
+  }
+  return 0; 
+}
+
+static int send_file_with_writes(client_t *client) {
+  char buffer[4096];
+  size_t remaining = client->file_size - client->file_offset;
+  size_t to_read = (remaining > sizeof(buffer)) ? sizeof(buffer) : remaining;
+
+  ssize_t bytes_read = read(client->file_fd, buffer, to_read);
+  if (bytes_read <= 0) {
+    if (bytes_read < 0) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        return 1;
+      }
+      return -1;
+    }
+    return 0;
+  }
+
+  size_t write_offset = 0;
+  while (write_offset < bytes_read) {
+    int write_status = writes(client, buffer, &write_offset, bytes_read);
+    if (write_status != 0) {
+      client->file_offset += write_offset;
+      return write_status; 
+    }
+  }
+
+  client->file_offset += bytes_read;
+  return 0; 
+}
+
 int send_file(client_t *client, bool use_sendfile) {
   if (client->file_offset >= client->file_size) {
-    return 0; // File fully sent
+    return 0; 
   }
 
+  int status;
   if (use_sendfile) {
-		printf("Using sendfile\n");
-    ssize_t bytes_sent =
-        sendfile(client->fd, client->file_fd, &client->file_offset,
-                 client->file_size - client->file_offset);
-    if (bytes_sent < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        return 1; // In progress
-      }
-      return -1; // Error
-    }
+    status = send_file_with_sendfile(client);
   } else {
-		printf("Not using sendfile\n");
-    // Read and write in a loop
-    char buffer[4096]; // Use a reasonably sized buffer
-    size_t remaining = client->file_size - client->file_offset;
-    size_t to_read = (remaining > sizeof(buffer)) ? sizeof(buffer) : remaining;
-
-    ssize_t bytes_read = read(client->file_fd, buffer, to_read);
-    if (bytes_read <= 0) {
-      if (bytes_read < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-          // This case is unlikely for a regular file read, but good practice
-          return 1;
-        }
-        return -1;
-      }
-      // EOF or 0 bytes read, so we're done (or an error)
-      goto cleanup;
-    }
-
-    size_t write_offset = 0;
-    while (write_offset < bytes_read) {
-      int write_status = writes(client, buffer, &write_offset, bytes_read);
-      if (write_status != 0) {
-        // Partial write or error occurred, return to caller
-        client->file_offset += write_offset;
-        if (write_status == 1) {
-          return 1;
-        } else {
-          return -1;
-        }
-      }
-    }
-    client->file_offset += bytes_read;
+    status = send_file_with_writes(client);
   }
 
-  // Check if the entire file is sent after the operation
-  if (client->file_offset >= client->file_size) {
-  cleanup:
+  if (status == -1) {
+    return -1;
+  }
+
+  if (client->file_offset >= client->file_size || status == 0) {
     close(client->file_fd);
     client->file_fd = -1;
     client->file_offset = 0;
     client->file_size = 0;
     client->headers_sent = false;
-    return 0; // Complete
+    return 0;
   }
 
-  return 1; // In progress
+  return 1;
 }
 
 int write_client_response(client_t *client) {
