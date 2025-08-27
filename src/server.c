@@ -82,7 +82,6 @@ typedef struct {
   // fields for sending data
   char *out_buffer;
   size_t out_buffer_len;
-  size_t out_buffer_size;
   size_t out_buffer_sent;
 
   // fields for state
@@ -198,7 +197,6 @@ void initialise_client(client_t *client) {
   client->out_buffer = NULL;
   client->out_buffer_len = 0;
   client->out_buffer_sent = 0;
-  client->out_buffer_size = 0;
 
   // initialise state fields
   client->state = READING;
@@ -506,10 +504,6 @@ int read_client_request(client_t *client) {
  *
  */
 
-// core function for writing buffers, handles partial writes
-// returns -1 on failure
-// returns 0 on success
-// returns 1 on EAGAIN (partial write)
 int writes(client_t *client, const char *buffer, size_t *offset,
                   size_t len) {
   size_t remaining = len - *offset;
@@ -535,10 +529,6 @@ int writes(client_t *client, const char *buffer, size_t *offset,
   return 1;
 }
 
-// sends a file conetents using sendfile()
-// returns -1 on failure
-// returns 0 on success
-// returns 1 on EAGAIN (partial write)
 int send_file_body(client_t *client) {
   if (client->file_offset >= client->file_size) {
     return 0;
@@ -556,7 +546,6 @@ int send_file_body(client_t *client) {
   }
 
   if (client->file_offset >= client->file_size) {
-    // clean up if the file is fully sent
     close(client->file_fd);
     client->file_fd = -1;
     client->file_offset = 0;
@@ -575,16 +564,14 @@ int build_headers(client_t *client, int status_code, const char *status_message,
                                 "Connection: keep-alive\r\n"
                                 "\r\n";
 
-  // calculate the size required for the headers
   size_t required_size =
       snprintf(NULL, 0, header_template, status_code, status_message,
                content_type, content_length) +
       1;
 
-  // allocate or reallocate the buffer
-  if (client->out_buffer == NULL || client->out_buffer_size < required_size) {
-    client->out_buffer_size = required_size;
-    char *temp = realloc(client->out_buffer, client->out_buffer_size);
+  if (client->out_buffer == NULL || client->out_buffer_len < required_size) {
+    client->out_buffer_len = required_size;
+    char *temp = realloc(client->out_buffer, client->out_buffer_len);
     if (temp == NULL) {
       logs('E', "Failed to reallocate buffer for headers.", NULL);
       return -1;
@@ -592,34 +579,25 @@ int build_headers(client_t *client, int status_code, const char *status_message,
     client->out_buffer = temp;
   }
 
-  // write the headers into the buffer
-  snprintf(client->out_buffer, client->out_buffer_size, header_template,
+  snprintf(client->out_buffer, client->out_buffer_len, header_template,
            status_code, status_message, content_type, content_length);
   client->out_buffer_len = strlen(client->out_buffer);
-  client->out_buffer_sent = 0; // reset sent count for new write operation
+  client->out_buffer_sent = 0; 
 
   return 0;
 }
 
-// sends headers and dynamic body (non file body)
-// returns -1 on failure
-// returns 0 on success
-// returns 1 on partial write
-// Corrected and refactored send_nonfile_response function
 int send_nonfile_response(client_t *client, int status_code,
                           const char *status_message, const char *content_type,
                           const char *body, size_t body_len) {
   int status;
 
-  // If the buffer is not yet allocated, build the full response in memory.
-  // This handles the case where the function is called for the first time.
   if (client->out_buffer == NULL) {
     if (build_headers(client, status_code, status_message, content_type,
                       body_len) != 0) {
-      return -1; // Header build failed
+      return -1; 
     }
 
-    // Allocate space for the body and append it to the buffer.
     size_t new_size = client->out_buffer_len + body_len + 1;
     char *temp = realloc(client->out_buffer, new_size);
     if (temp == NULL) {
@@ -627,32 +605,25 @@ int send_nonfile_response(client_t *client, int status_code,
       return -1;
     }
     client->out_buffer = temp;
-    client->out_buffer_size = new_size;
+    client->out_buffer_len = new_size;
     memcpy(client->out_buffer + client->out_buffer_len, body, body_len);
     client->out_buffer_len += body_len;
     client->out_buffer[client->out_buffer_len] = '\0';
   }
 
-  // Use write_partial to send the entire constructed buffer.
   status = writes(client, client->out_buffer, &client->out_buffer_sent,
                          client->out_buffer_len);
 
-  // Clean up if the entire response has been sent.
   if (status == 0) {
     free(client->out_buffer);
     client->out_buffer = NULL;
     client->out_buffer_len = 0;
-    client->out_buffer_size = 0;
     client->out_buffer_sent = 0;
   }
   return status;
 }
 
-// sends headers only
-// returns -1 on failure
-// returns 0 on success
-// returns 1 on partial write
-int send_headers(client_t *client, int status_code,
+int send_headers_only(client_t *client, int status_code,
                       const char *status_message, const char *content_type,
                       size_t content_length) {
   int status = 1;
@@ -672,7 +643,6 @@ int send_headers(client_t *client, int status_code,
       free(client->out_buffer);
       client->out_buffer = NULL;
       client->out_buffer_len = 0;
-      client->out_buffer_size = 0;
       client->out_buffer_sent = 0;
     } else {
       return status;
@@ -758,9 +728,7 @@ int find_file(client_t *client) {
         if (realpath(final_path, NULL) != NULL) {
           final_path = realpath(final_path, NULL);
           break;
-        } else {
-					final_path = NULL;
-				}
+        }
       }
     } else if (request_path[strlen(request_path) - 1] != '/') {
       // try with the extension fallbacks if the request path doesn't end with a
@@ -772,9 +740,7 @@ int find_file(client_t *client) {
         if (realpath(final_path, NULL) != NULL) {
           final_path = realpath(final_path, NULL);
           break;
-        } else {
-					final_path = NULL;
-				}
+        }
       }
     }
   }
@@ -818,7 +784,7 @@ int write_client_response(client_t *client) {
   // ff a file was found (file_fd != -1), send the file response
   if (!client->headers_sent) {
     const char *mime_type = get_mime_type(client->file_path);
-    status = send_headers(client, 200, "OK", mime_type, client->file_size);
+    status = send_headers_only(client, 200, "OK", mime_type, client->file_size);
     if (status == 1) {
       return status;
     }
@@ -920,12 +886,12 @@ void run_worker(int *listen_sockets, int num_sockets) {
           if (read_status == 0) {
             // read returns 0, which means success
             // transition epoll event to EPOLLOUT and set state to WRITING
-            logs('D', "Full read. No more data to read from Client %s", NULL, client->ip);
+            logs('D', "No more data to read from Client %s", NULL, client->ip);
             transition_state(client, epoll_fd, WRITING);
           } else if (read_status == 1) {
             // read returns 1, which means more data is expected, stay in
             // READING state
-            logs('D', "Partial read. More data to read from Client %s", NULL, client->ip);
+            logs('D', "More data to read from Client %s", NULL, client->ip);
             continue;
           } else {
             // read returns -1, which means error, so close connection
@@ -942,18 +908,13 @@ void run_worker(int *listen_sockets, int num_sockets) {
             // transition epoll event to EPOLLIN and set state to READING
             int keepalive = 1; // obviously would be replaced when we actually
                                // pase the keep-alive header
-            logs('D', "Full write. No more data to write to Client %s", NULL, client->ip);
+            logs('D', "No more data to write to Client %s", NULL, client->ip);
             if (keepalive == 1) {
               transition_state(client, epoll_fd, READING);
             } else {
               transition_state(client, epoll_fd, CLOSING);
               close_connection(client, epoll_fd, &active_connections);
             }
-          } else if (write_status == 1) {
-            // write returns 1, which means more data is expected.
-            // Stay in the WRITING state to continue writing later.
-            logs('D', "Partial write. More data to write to Client %s", NULL, client->ip);
-            continue;
           } else {
             // write returns -1, which means error, so close connection
             logs('E', "write_client_response() failed. Output: %s", NULL,
