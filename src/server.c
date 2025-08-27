@@ -504,8 +504,7 @@ int read_client_request(client_t *client) {
  *
  */
 
-int writes(client_t *client, const char *buffer, size_t *offset,
-                  size_t len) {
+int writes(client_t *client, const char *buffer, size_t *offset, size_t len) {
   size_t remaining = len - *offset;
   if (remaining == 0) {
     return 0;
@@ -582,7 +581,7 @@ int build_headers(client_t *client, int status_code, const char *status_message,
   snprintf(client->out_buffer, client->out_buffer_len, header_template,
            status_code, status_message, content_type, content_length);
   client->out_buffer_len = strlen(client->out_buffer);
-  client->out_buffer_sent = 0; 
+  client->out_buffer_sent = 0;
 
   return 0;
 }
@@ -595,7 +594,7 @@ int send_nonfile_response(client_t *client, int status_code,
   if (client->out_buffer == NULL) {
     if (build_headers(client, status_code, status_message, content_type,
                       body_len) != 0) {
-      return -1; 
+      return -1;
     }
 
     size_t new_size = client->out_buffer_len + body_len + 1;
@@ -612,7 +611,7 @@ int send_nonfile_response(client_t *client, int status_code,
   }
 
   status = writes(client, client->out_buffer, &client->out_buffer_sent,
-                         client->out_buffer_len);
+                  client->out_buffer_len);
 
   if (status == 0) {
     free(client->out_buffer);
@@ -623,33 +622,35 @@ int send_nonfile_response(client_t *client, int status_code,
   return status;
 }
 
-int send_headers_only(client_t *client, int status_code,
+int send_headers(client_t *client, int status_code,
                       const char *status_message, const char *content_type,
                       size_t content_length) {
-  int status = 1;
+  int send_header_status;
 
-  if (!client->headers_sent) {
-    if (client->out_buffer == NULL) {
-      if (build_headers(client, status_code, status_message, content_type,
-                        content_length) != 0) {
-        return -1;
-      }
-    }
-    status = writes(client, client->out_buffer, &client->out_buffer_sent,
-                           client->out_buffer_len);
-
-    if (status == 0) {
-      client->headers_sent = true;
-      free(client->out_buffer);
-      client->out_buffer = NULL;
-      client->out_buffer_len = 0;
-      client->out_buffer_sent = 0;
-    } else {
-      return status;
-    }
+  if (client->headers_sent) {
+		return 0;
   }
 
-  return status;
+  if (client->out_buffer == NULL) {
+    if (build_headers(client, status_code, status_message, content_type,
+                      content_length) != 0) {
+      return -1;
+    }
+  }
+  send_header_status = writes(client, client->out_buffer,
+                              &client->out_buffer_sent, client->out_buffer_len);
+
+  if (send_header_status == 0) {
+    client->headers_sent = true;
+    free(client->out_buffer);
+    client->out_buffer = NULL;
+    client->out_buffer_len = 0;
+    client->out_buffer_sent = 0;
+  } else {
+    return send_header_status;
+  }
+
+  return send_header_status;
 }
 
 int is_directory(const char *path) {
@@ -754,8 +755,10 @@ int find_file(client_t *client) {
     client->file_size = file_stat.st_size;
     client->file_path = strdup(final_path);
 
-		if (request_path_with_content_dir != NULL) free(request_path_with_content_dir);
-		if (final_path != NULL) free(final_path); // free the string returned by realpath
+    if (request_path_with_content_dir != NULL)
+      free(request_path_with_content_dir);
+    if (final_path != NULL)
+      free(final_path); // free the string returned by realpath
     return 0;
   } else {
     return -1;
@@ -784,7 +787,7 @@ int write_client_response(client_t *client) {
   // ff a file was found (file_fd != -1), send the file response
   if (!client->headers_sent) {
     const char *mime_type = get_mime_type(client->file_path);
-    status = send_headers_only(client, 200, "OK", mime_type, client->file_size);
+    status = send_headers(client, 200, "OK", mime_type, client->file_size);
     if (status == 1) {
       return status;
     }
@@ -933,7 +936,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
   close(epoll_fd);
   g_hash_table_destroy(client_map);
   atexit(free_config);
-	atexit(free_mime_types);
+  atexit(free_mime_types);
   munmap(total_connections, sizeof(atomic_int));
   exit(0);
 }
@@ -1021,8 +1024,8 @@ void check_valid_config() {
 
 void frees(void *ptr) {
   if (ptr != NULL) {
-		free(ptr);
-	}
+    free(ptr);
+  }
 }
 
 void free_request(request_t *request) {
@@ -1042,15 +1045,14 @@ void free_request(request_t *request) {
   frees(request);
 }
 
-
 void free_client(client_t *client) {
   if (client == NULL) {
     return;
   }
 
   frees(client->ip);
-	frees(client->in_buffer);
-	frees(client->out_buffer);
+  frees(client->in_buffer);
+  frees(client->out_buffer);
 
   if (client->file_fd != -1) {
     close(client->file_fd);
@@ -1111,7 +1113,7 @@ int main() {
 
   // 7. free_config at exit for master process
   atexit(free_config);
-	atexit(free_mime_types);
+  atexit(free_mime_types);
   shm_unlink(shm_name);
   logs('I', "Server exiting.", NULL);
 
