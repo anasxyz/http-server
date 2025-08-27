@@ -504,155 +504,6 @@ int read_client_request(client_t *client) {
  *
  */
 
-int writes(client_t *client, const char *buffer, size_t *offset, size_t len) {
-  size_t remaining = len - *offset;
-  if (remaining == 0) {
-    return 0;
-  }
-
-  ssize_t bytes_written = write(client->fd, buffer + *offset, remaining);
-
-  if (bytes_written < 0) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      logs('D', "Partial write to client %s", NULL, client->ip);
-      return 1;
-    }
-    return -1;
-  }
-
-  *offset += bytes_written;
-
-  if (*offset >= len) {
-    return 0;
-  }
-  return 1;
-}
-
-int send_file_body(client_t *client) {
-  if (client->file_offset >= client->file_size) {
-    return 0;
-  }
-
-  ssize_t bytes_sent =
-      sendfile(client->fd, client->file_fd, &client->file_offset,
-               client->file_size - client->file_offset);
-
-  if (bytes_sent < 0) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return 1;
-    }
-    return -1;
-  }
-
-  if (client->file_offset >= client->file_size) {
-    close(client->file_fd);
-    client->file_fd = -1;
-    client->file_offset = 0;
-    client->file_size = 0;
-    client->headers_sent = false;
-    return 0;
-  }
-  return 1;
-}
-
-int build_headers(client_t *client, int status_code, const char *status_message,
-                  const char *content_type, size_t content_length) {
-  const char *header_template = "HTTP/1.1 %d %s\r\n"
-                                "Content-Type: %s\r\n"
-                                "Content-Length: %zu\r\n"
-                                "Connection: keep-alive\r\n"
-                                "\r\n";
-
-  size_t required_size =
-      snprintf(NULL, 0, header_template, status_code, status_message,
-               content_type, content_length) +
-      1;
-
-  if (client->out_buffer == NULL || client->out_buffer_len < required_size) {
-    client->out_buffer_len = required_size;
-    char *temp = realloc(client->out_buffer, client->out_buffer_len);
-    if (temp == NULL) {
-      logs('E', "Failed to reallocate buffer for headers.", NULL);
-      return -1;
-    }
-    client->out_buffer = temp;
-  }
-
-  snprintf(client->out_buffer, client->out_buffer_len, header_template,
-           status_code, status_message, content_type, content_length);
-  client->out_buffer_len = strlen(client->out_buffer);
-  client->out_buffer_sent = 0;
-
-  return 0;
-}
-
-int send_nonfile_response(client_t *client, int status_code,
-                          const char *status_message, const char *content_type,
-                          const char *body, size_t body_len) {
-  int status;
-
-  if (client->out_buffer == NULL) {
-    if (build_headers(client, status_code, status_message, content_type,
-                      body_len) != 0) {
-      return -1;
-    }
-
-    size_t new_size = client->out_buffer_len + body_len + 1;
-    char *temp = realloc(client->out_buffer, new_size);
-    if (temp == NULL) {
-      logs('E', "Failed to reallocate buffer for non-file response.", NULL);
-      return -1;
-    }
-    client->out_buffer = temp;
-    client->out_buffer_len = new_size;
-    memcpy(client->out_buffer + client->out_buffer_len, body, body_len);
-    client->out_buffer_len += body_len;
-    client->out_buffer[client->out_buffer_len] = '\0';
-  }
-
-  status = writes(client, client->out_buffer, &client->out_buffer_sent,
-                  client->out_buffer_len);
-
-  if (status == 0) {
-    free(client->out_buffer);
-    client->out_buffer = NULL;
-    client->out_buffer_len = 0;
-    client->out_buffer_sent = 0;
-  }
-  return status;
-}
-
-int send_headers(client_t *client, int status_code,
-                      const char *status_message, const char *content_type,
-                      size_t content_length) {
-  int send_header_status;
-
-  if (client->headers_sent) {
-		return 0;
-  }
-
-  if (client->out_buffer == NULL) {
-    if (build_headers(client, status_code, status_message, content_type,
-                      content_length) != 0) {
-      return -1;
-    }
-  }
-  send_header_status = writes(client, client->out_buffer,
-                              &client->out_buffer_sent, client->out_buffer_len);
-
-  if (send_header_status == 0) {
-    client->headers_sent = true;
-    free(client->out_buffer);
-    client->out_buffer = NULL;
-    client->out_buffer_len = 0;
-    client->out_buffer_sent = 0;
-  } else {
-    return send_header_status;
-  }
-
-  return send_header_status;
-}
-
 int is_directory(const char *path) {
   struct stat st;
   return (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
@@ -765,26 +616,128 @@ int find_file(client_t *client) {
   }
 }
 
+int writes(client_t *client, const char *buffer, size_t *offset, size_t len) {
+  size_t remaining = len - *offset;
+  if (remaining == 0) {
+    return 0;
+  }
+
+  ssize_t bytes_written = write(client->fd, buffer + *offset, remaining);
+
+  if (bytes_written < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      logs('D', "Partial write to client %s", NULL, client->ip);
+      return 1;
+    }
+    return -1;
+  }
+
+  *offset += bytes_written;
+
+  if (*offset >= len) {
+    return 0;
+  }
+  return 1;
+}
+
+int build_headers(client_t *client, int status_code, const char *status_message,
+                  const char *content_type, size_t content_length) {
+  const char *header_template = "HTTP/1.1 %d %s\r\n"
+                                "Content-Type: %s\r\n"
+                                "Content-Length: %zu\r\n"
+                                "Connection: keep-alive\r\n"
+                                "\r\n";
+
+  size_t required_size =
+      snprintf(NULL, 0, header_template, status_code, status_message,
+               content_type, content_length) +
+      1;
+
+  if (client->out_buffer == NULL || client->out_buffer_len < required_size) {
+    client->out_buffer_len = required_size;
+    char *temp = realloc(client->out_buffer, client->out_buffer_len);
+    if (temp == NULL) {
+      logs('E', "Failed to reallocate buffer for headers.", NULL);
+      return -1;
+    }
+    client->out_buffer = temp;
+  }
+
+  snprintf(client->out_buffer, client->out_buffer_len, header_template,
+           status_code, status_message, content_type, content_length);
+  client->out_buffer_len = strlen(client->out_buffer);
+  client->out_buffer_sent = 0;
+
+  return 0;
+}
+
+int send_headers(client_t *client, int status_code,
+                      const char *status_message, const char *content_type,
+                      size_t content_length) {
+  int send_header_status;
+
+  if (client->headers_sent) {
+		return 0;
+  }
+
+  if (client->out_buffer == NULL) {
+    if (build_headers(client, status_code, status_message, content_type,
+                      content_length) != 0) {
+      return -1;
+    }
+  }
+  send_header_status = writes(client, client->out_buffer,
+                              &client->out_buffer_sent, client->out_buffer_len);
+
+  if (send_header_status == 0) {
+    client->headers_sent = true;
+    free(client->out_buffer);
+    client->out_buffer = NULL;
+    client->out_buffer_len = 0;
+    client->out_buffer_sent = 0;
+  } else {
+    return send_header_status;
+  }
+
+  return send_header_status;
+}
+
+int send_file(client_t *client) {
+  if (client->file_offset >= client->file_size) {
+    return 0;
+  }
+
+  ssize_t bytes_sent =
+      sendfile(client->fd, client->file_fd, &client->file_offset,
+               client->file_size - client->file_offset);
+
+  if (bytes_sent < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return 1;
+    }
+    return -1;
+  }
+
+  if (client->file_offset >= client->file_size) {
+    close(client->file_fd);
+    client->file_fd = -1;
+    client->file_offset = 0;
+    client->file_size = 0;
+    client->headers_sent = false;
+    return 0;
+  }
+  return 1;
+}
+
 int write_client_response(client_t *client) {
   int status = 1;
 
   // check if the request is for a file
   if (client->file_fd == -1) {
     int find_file_status = find_file(client);
-
-    if (find_file_status == -1) {
-      // file not found and fallback not found, send a manual 404 response
-      const char *body =
-          "<!DOCTYPE html><html><head><title>404 Not "
-          "Found</title></head><body><h1>404 Not Found</h1><p>The requested "
-          "URL was not found on this server.</p></body></html>";
-      size_t body_len = strlen(body);
-      return send_nonfile_response(client, 404, "Not Found", "text/html", body,
-                                   body_len);
-    }
   }
 
-  // ff a file was found (file_fd != -1), send the file response
+  // if a file was found (file_fd != -1), send the file response
   if (!client->headers_sent) {
     const char *mime_type = get_mime_type(client->file_path);
     status = send_headers(client, 200, "OK", mime_type, client->file_size);
@@ -793,7 +746,7 @@ int write_client_response(client_t *client) {
     }
   }
 
-  status = send_file_body(client);
+  status = send_file(client);
   return status;
 }
 
