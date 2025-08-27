@@ -711,7 +711,7 @@ static int send_file_with_sendfile(client_t *client) {
     }
     return -1;
   }
-  return 0; 
+  return 0;
 }
 
 static int send_file_with_writes(client_t *client) {
@@ -735,17 +735,17 @@ static int send_file_with_writes(client_t *client) {
     int write_status = writes(client, buffer, &write_offset, bytes_read);
     if (write_status != 0) {
       client->file_offset += write_offset;
-      return write_status; 
+      return write_status;
     }
   }
 
   client->file_offset += bytes_read;
-  return 0; 
+  return 0;
 }
 
 int send_file(client_t *client, bool use_sendfile) {
   if (client->file_offset >= client->file_size) {
-    return 0; 
+    return 0;
   }
 
   int status;
@@ -771,25 +771,83 @@ int send_file(client_t *client, bool use_sendfile) {
   return 1;
 }
 
+int send_body(client_t *client, const char *body, size_t body_len) {
+  // If the body hasn't been loaded into the buffer yet
+  if (client->out_buffer == NULL) {
+    // Allocate space for the new body content
+    client->out_buffer_len = body_len;
+    char *temp = realloc(client->out_buffer, client->out_buffer_len);
+    if (temp == NULL) {
+      logs('E', "Failed to reallocate buffer for body.", NULL);
+      return -1;
+    }
+    client->out_buffer = temp;
+
+    // Copy the body string into the buffer
+    memcpy(client->out_buffer, body, body_len);
+    client->out_buffer_sent = 0;
+  }
+
+  // Now, send the data from the buffer
+  int write_status = writes(client, client->out_buffer,
+                            &client->out_buffer_sent, client->out_buffer_len);
+
+  if (write_status == 0) {
+    // Full body sent successfully
+    // Reset the out_buffer for the next use
+    free(client->out_buffer);
+    client->out_buffer = NULL;
+    client->out_buffer_len = 0;
+    client->out_buffer_sent = 0;
+  }
+
+  return write_status;
+}
+
 int write_client_response(client_t *client) {
   int status = 1;
+  bool serve_file = true;
 
-  // check if the request is for a file
-  if (client->file_fd == -1) {
-    int find_file_status = find_file(client);
-  }
-
-  // if a file was found (file_fd != -1), send the file response
-  if (!client->headers_sent) {
-    const char *mime_type = get_mime_type(client->file_path);
-    status = send_headers(client, 200, "OK", mime_type, client->file_size);
-    if (status == 1) {
-      return status;
+  if (serve_file) {
+    // check if the request is for a file
+    if (client->file_fd == -1) {
+      int find_file_status = find_file(client);
     }
-  }
 
-  status = send_file(client, false);
-  return status;
+    // if a file was found (file_fd != -1), send the file response
+    if (!client->headers_sent) {
+      const char *mime_type = get_mime_type(client->file_path);
+      status = send_headers(client, 200, "OK", mime_type, client->file_size);
+      if (status == 1) {
+        return status;
+      }
+    }
+
+    status = send_file(client, false);
+    return status;
+  } else {
+    const char *body = "Hello, world!";
+    size_t body_len = strlen(body);
+
+    // First, send the headers
+    if (!client->headers_sent) {
+      status = send_headers(client, 200, "OK", "text/plain", body_len);
+      if (status != 0) {
+        return status;
+      }
+    }
+
+    // Then, send the body
+    status = send_body(client, body, body_len);
+
+    if (status == 0) {
+      // Full response (headers + body) is complete.
+      // Reset the client for the next request.
+      client->headers_sent = false;
+    }
+
+    return status;
+  }
 }
 
 /*
