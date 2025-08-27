@@ -266,7 +266,7 @@ int handle_new_connection(int connection_socket, int epoll_fd,
   g_hash_table_insert(client_map, GINT_TO_POINTER(client->fd), client);
 
   // add client's socket to epoll instance
-  event.events = EPOLLIN;
+  event.events = EPOLLIN | EPOLLET;
   event.data.fd = client->fd;
   if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client->fd, &event) == -1) {
     logs('E', "Failed to add client socket to epoll.",
@@ -924,7 +924,7 @@ int setup_epoll(int *listen_sockets, int num_sockets) {
   // add the listening sockets to the epoll instance
   struct epoll_event event;
   for (int i = 0; i < num_sockets; i++) {
-    event.events = EPOLLIN | EPOLLEXCLUSIVE;
+    event.events = EPOLLIN | EPOLLET | EPOLLEXCLUSIVE;
     event.data.fd = listen_sockets[i];
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_sockets[i], &event) == -1) {
       logs('E', "Worker failed to register listening socket.",
@@ -987,6 +987,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
           logs('W', "Server is full. Rejecting connection.", NULL);
         }
       } else {
+				// handle existing connection
         // get client from client map
         client_t *client = (client_t *)g_hash_table_lookup(
             client_map, GINT_TO_POINTER(current_fd));
@@ -994,18 +995,20 @@ void run_worker(int *listen_sockets, int num_sockets) {
         if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
           transition_state(client, epoll_fd, CLOSING);
           close_connection(client, epoll_fd, &active_connections);
-        } else if (events[i].events & EPOLLIN) {
+        } 
+
+				if (events[i].events & EPOLLIN) {
           // it's a read event
           int read_status = read_client_request(client);
           if (read_status == 0) {
             // read returns 0, which means success
             // transition epoll event to EPOLLOUT and set state to WRITING
-            logs('D', "No more data to read from Client %s", NULL, client->ip);
+            logs('D', "Fully read. No more data to read from Client %s", NULL, client->ip);
             transition_state(client, epoll_fd, WRITING);
           } else if (read_status == 1) {
             // read returns 1, which means more data is expected, stay in
             // READING state
-            logs('D', "More data to read from Client %s", NULL, client->ip);
+            logs('D', "Partial read. More data to read from Client %s", NULL, client->ip);
             continue;
           } else {
             // read returns -1, which means error, so close connection
@@ -1014,7 +1017,9 @@ void run_worker(int *listen_sockets, int num_sockets) {
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
           }
-        } else if (events[i].events & EPOLLOUT) {
+        } 
+
+				if (events[i].events & EPOLLOUT) {
           // it's a write event
           int write_status = write_client_response(client);
           if (write_status == 0) {
@@ -1022,24 +1027,26 @@ void run_worker(int *listen_sockets, int num_sockets) {
             // transition epoll event to EPOLLIN and set state to READING
             int keepalive = 1; // obviously would be replaced when we actually
                                // pase the keep-alive header
-            logs('D', "No more data to write to Client %s", NULL, client->ip);
+            logs('D', "Full write. No more data to write to Client %s", NULL, client->ip);
             if (keepalive == 1) {
               transition_state(client, epoll_fd, READING);
             } else {
               transition_state(client, epoll_fd, CLOSING);
               close_connection(client, epoll_fd, &active_connections);
             }
-          } else {
+          } else if (write_status == 1) {
+						// write returns 1, which means more data is expected, stay in
+						// WRITING state
+						logs('D', "Partial write. More data to write to Client %s", NULL, client->ip);
+						continue;
+					} else {
             // write returns -1, which means error, so close connection
             logs('E', "write_client_response() failed. Output: %s", NULL,
                  write_status);
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
           }
-        } else {
-          logs('E', "Unexpected event on socket %d", NULL, current_fd);
-          close_connection(client, epoll_fd, &active_connections);
-        }
+        } 
       }
     }
   }
