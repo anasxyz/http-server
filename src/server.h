@@ -12,7 +12,7 @@
 
 // max buffer size for reading/writing
 // probably obsolete after switching to dynamic buffers
-#define MAX_BUFFER_SIZE 8192 // 8KB
+#define MAX_BUFFER_SIZE 16 * 1024 // 16 KB
 
 // request line struct
 // eg GET /index.html HTTP/1.1
