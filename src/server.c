@@ -112,6 +112,8 @@ void initialise_client(client_t *client) {
   client->file_fd = -1;
   client->file_offset = 0;
   client->file_size = 0;
+
+  client->request = NULL;
 }
 
 int handle_new_connection(int connection_socket, int epoll_fd,
@@ -203,30 +205,22 @@ void close_connection(client_t *client, int epoll_fd, int *active_connections) {
     return;
   }
 
-  logs('I', "Closing connection for client %s (socket %d)", NULL, client->ip,
-       client->fd);
-
-  // remove the file descriptor from the epoll instance
   if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client->fd, NULL) == -1 &&
       errno != ENOENT) {
-    perror("REASON: epoll_ctl: DEL client socket failed");
+    perror("epoll_ctl: DEL client socket failed");
   }
 
-  // close the socket file descriptor
   close(client->fd);
 
-  // remove the client from the hash table
-  // this will trigger the g_hash_table_new_full's
-  // GDestroyNotify, which will call free_client(),
-  // thereby freeing the client_t struct and its contents
   g_hash_table_remove(client_map, GINT_TO_POINTER(client->fd));
+
+  free_client(client);
 
   (*active_connections)--;
   atomic_fetch_sub(total_connections, 1);
 
   logs('I', "Total active connections: %d", NULL,
        atomic_load(total_connections));
-
   printf("Total active connections: %d\n", atomic_load(total_connections));
 }
 
@@ -253,6 +247,13 @@ int parse_request(char *buffer, size_t buffer_len, request_t *request) {
   char *current_pos = buffer;
   char *end_of_line;
 
+  request->request_line.method = NULL;
+  request->request_line.uri = NULL;
+  request->request_line.version = NULL;
+  request->headers = NULL;
+  request->body = NULL;
+  request->body_len = 0;
+
   // parse request line
   end_of_line = find_newline(current_pos, buffer_len - (current_pos - buffer));
   if (end_of_line == NULL) {
@@ -275,6 +276,7 @@ int parse_request(char *buffer, size_t buffer_len, request_t *request) {
   request->headers =
       g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   if (request->headers == NULL) {
+    free_request(request);
     return -1; // failed to allocate memory for headers
   }
 
@@ -552,8 +554,8 @@ int find_file(client_t *client) {
           final_path = realpath(final_path, NULL);
           break;
         } else {
-					final_path = NULL;
-				}
+          final_path = NULL;
+        }
       }
     } else if (request_path[strlen(request_path) - 1] != '/') {
       // try with the extension fallbacks if the request path doesn't end with a
@@ -566,8 +568,8 @@ int find_file(client_t *client) {
           final_path = realpath(final_path, NULL);
           break;
         } else {
-					final_path = NULL;
-				}
+          final_path = NULL;
+        }
       }
     }
   }
@@ -822,7 +824,7 @@ int send_404(client_t *client) {
 // main orchestrator function for writing client responses
 int write_client_response(client_t *client) {
   int status = 1;
-  bool serving_file = true;
+  bool serving_file = false;
 
   if (serving_file) {
     // check if fild is already known
@@ -830,8 +832,8 @@ int write_client_response(client_t *client) {
       int find_file_status = find_file(client);
 
       if (find_file_status != 0) {
-				status = send_404(client);
-				return status;
+        status = send_404(client);
+        return status;
       }
     }
 
@@ -850,10 +852,14 @@ int write_client_response(client_t *client) {
     int use_sendfile = global_config->http->sendfile;
     status = serve_file(client, use_sendfile);
 
+    if (client->file_path != NULL) {
+      free(client->file_path);
+    }
+
     return status;
   } else {
     // if not serving file, send simple response
-    const char *body = "Hello, world!";
+    const char *body = "Hello World!";
     size_t body_len = strlen(body);
 
     // check if headers were already sent
@@ -914,8 +920,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
   int active_connections = 0;
 
   // create client_map
-  client_map = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL,
-                                     (GDestroyNotify)free_client);
+  client_map = g_hash_table_new(g_direct_hash, g_direct_equal);
   if (client_map == NULL) {
     logs('E', "Worker failed to create client_map.",
          "run_worker(): g_hash_table_new() failed.");
@@ -962,6 +967,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
         if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
           transition_state(client, epoll_fd, CLOSING);
           close_connection(client, epoll_fd, &active_connections);
+          continue;
         }
 
         if (events[i].events & EPOLLIN) {
@@ -985,6 +991,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
                  read_status);
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
+            continue;
           }
         }
 
@@ -1003,6 +1010,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
             } else {
               transition_state(client, epoll_fd, CLOSING);
               close_connection(client, epoll_fd, &active_connections);
+              continue;
             }
           } else if (write_status == 1) {
             // write returns 1, which means more data is expected, stay in
@@ -1016,6 +1024,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
                  write_status);
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
+            continue;
           }
         }
       }
@@ -1122,16 +1131,29 @@ void free_request(request_t *request) {
     return;
   }
 
-  frees(request->request_line.method);
-  frees(request->request_line.uri);
-  frees(request->request_line.version);
+  if (request->request_line.method != NULL) {
+    frees(request->request_line.method);
+  }
+
+  if (request->request_line.uri != NULL) {
+    frees(request->request_line.uri);
+  }
+
+  if (request->request_line.version != NULL) {
+    frees(request->request_line.version);
+  }
 
   if (request->headers != NULL) {
     g_hash_table_destroy(request->headers);
   }
 
-  frees(request->body);
-  frees(request);
+  if (request->body != NULL) {
+    frees(request->body);
+  }
+
+  if (request != NULL) {
+    frees(request);
+  }
 }
 
 void free_client(client_t *client) {
@@ -1139,15 +1161,24 @@ void free_client(client_t *client) {
     return;
   }
 
-  frees(client->ip);
-  frees(client->in_buffer);
-  frees(client->out_buffer);
-
   if (client->file_fd != -1) {
     close(client->file_fd);
   }
 
+  if (client->ip != NULL) {
+    frees(client->ip);
+  }
+
+  if (client->in_buffer != NULL) {
+    frees(client->in_buffer);
+  }
+
+  if (client->out_buffer != NULL) {
+    frees(client->out_buffer);
+  }
+
   free_request(client->request);
+
   frees(client);
 }
 
