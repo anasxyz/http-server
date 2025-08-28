@@ -55,11 +55,11 @@ void transition_state(client_t *client, int epoll_fd, state_e new_state) {
 
   // Handle epoll modifications based on the transition
   if (current_state == READING && new_state == WRITING) {
-    if (set_epoll(epoll_fd, client, EPOLLOUT) == -1) {
+    if (set_epoll(epoll_fd, client, EPOLLOUT | EPOLLET) == -1) {
       return;
     }
   } else if (current_state == WRITING && new_state == READING) {
-    if (set_epoll(epoll_fd, client, EPOLLIN) == -1) {
+    if (set_epoll(epoll_fd, client, EPOLLIN | EPOLLET) == -1) {
       return;
     }
   }
@@ -683,73 +683,81 @@ int send_headers(client_t *client, int status_code, const char *status_message,
 }
 
 static int send_file_with_sendfile(client_t *client) {
-  ssize_t bytes_sent =
-      sendfile(client->fd, client->file_fd, &client->file_offset,
-               client->file_size - client->file_offset);
-  if (bytes_sent < 0) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return 1;
+  while (client->file_offset < client->file_size) {
+    ssize_t bytes_sent =
+        sendfile(client->fd, client->file_fd, &client->file_offset,
+                 client->file_size - client->file_offset);
+    if (bytes_sent < 0) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        // Socket can't accept more data right now; stop and wait for EPOLLOUT
+        return 1;
+      }
+      // Fatal error
+      return -1;
     }
-    return -1;
+    // bytes_sent is added automatically to client->file_offset
   }
+
+  // File fully sent
+  close(client->file_fd);
+  client->file_fd = -1;
+  client->file_offset = 0;
+  client->file_size = 0;
+  client->headers_sent = false;
+
   return 0;
 }
 
 //
 static int send_file_with_writes(client_t *client) {
-  // if the file hasn't been mapped into the buffer yet
-  if (client->out_buffer == NULL) {
-    // determine how much data to read at a time
-    const size_t chunk_size = MAX_BUFFER_SIZE;
-    size_t bytes_to_read =
-        (client->file_size - client->file_offset) > chunk_size
-            ? chunk_size
-            : (client->file_size - client->file_offset);
+  const size_t chunk_size = MAX_BUFFER_SIZE;
 
-    if (bytes_to_read == 0) {
-      return 0;
-    }
-
-    client->out_buffer = malloc(bytes_to_read);
+  while (client->file_offset < client->file_size) {
     if (client->out_buffer == NULL) {
-      logs('E', "Failed to allocate memory for file chunk.", NULL);
+      size_t bytes_to_read =
+          (client->file_size - client->file_offset) > chunk_size
+              ? chunk_size
+              : (client->file_size - client->file_offset);
+
+      client->out_buffer = malloc(bytes_to_read);
+      if (!client->out_buffer)
+        return -1;
+
+      ssize_t bytes_read = pread(client->file_fd, client->out_buffer,
+                                 bytes_to_read, client->file_offset);
+      if (bytes_read < 0)
+        return -1;
+
+      client->out_buffer_len = bytes_read;
+      client->out_buffer_sent = 0;
+    }
+
+    int write_status = writes(client, client->out_buffer,
+                              &client->out_buffer_sent, client->out_buffer_len);
+
+    if (write_status == 1) {
+      // Socket full, stop here. EPOLLET will notify again.
+      return 1;
+    } else if (write_status == -1) {
       return -1;
     }
-    client->out_buffer_len = bytes_to_read;
-    client->out_buffer_sent = 0;
 
-    // read a chunk from the file into the buffer
-    ssize_t bytes_read = pread(client->file_fd, client->out_buffer,
-                               bytes_to_read, client->file_offset);
-    if (bytes_read < 0) {
-      logs('E', "Failed to read from file.", NULL);
-      client->out_buffer = NULL;
-      return -1;
-    }
-    client->out_buffer_len = bytes_read;
-  }
-
-  // send the buffered data/chunk
-  int write_status = writes(client, client->out_buffer,
-                            &client->out_buffer_sent, client->out_buffer_len);
-
-  // if the entire chunk has been sent, free it and update the file offset
-  if (write_status == 0) {
+    // Chunk fully sent
     client->file_offset += client->out_buffer_len;
+    free(client->out_buffer);
     client->out_buffer = NULL;
     client->out_buffer_len = 0;
     client->out_buffer_sent = 0;
-    // check if the whole file is sent
-    if (client->file_offset >= client->file_size) {
-			// file transfer complete
-      return 0;
-    } else {
-			// more data to be sent
-      return 1; 
-    }
   }
 
-  return write_status;
+  // Entire file sent
+  close(client->file_fd);
+  client->file_fd = -1;
+  client->file_offset = 0;
+  client->file_size = 0;
+  client->headers_sent = false;
+
+  return 0;
 }
 
 int serve_file(client_t *client, int use_sendfile) {
@@ -791,36 +799,30 @@ int serve_file(client_t *client, int use_sendfile) {
 }
 
 int send_body(client_t *client, const char *body, size_t body_len) {
-  // if the body hasn't been loaded into the buffer yet
   if (client->out_buffer == NULL) {
-    // allocate or reallocate space for the new body content
     client->out_buffer_len = body_len;
-    char *temp = realloc(client->out_buffer, client->out_buffer_len);
-    if (temp == NULL) {
-      logs('E', "Failed to reallocate buffer for body.", NULL);
+    client->out_buffer = malloc(body_len);
+    if (!client->out_buffer)
       return -1;
-    }
-    client->out_buffer = temp;
-
-    // copy the body string into the buffer
     memcpy(client->out_buffer, body, body_len);
     client->out_buffer_sent = 0;
   }
 
-  // send the data from the buffer
-  int write_status = writes(client, client->out_buffer,
-                            &client->out_buffer_sent, client->out_buffer_len);
-
-  if (write_status == 0) {
-    // full body sent successfully
-    // reset the out_buffer for the next use
-    free(client->out_buffer);
-    client->out_buffer = NULL;
-    client->out_buffer_len = 0;
-    client->out_buffer_sent = 0;
+  while (client->out_buffer_sent < client->out_buffer_len) {
+    int write_status = writes(client, client->out_buffer,
+                              &client->out_buffer_sent, client->out_buffer_len);
+    if (write_status == 1)
+      return 1; // stop if socket full
+    if (write_status == -1)
+      return -1; // error
   }
 
-  return write_status;
+  // Fully sent
+  free(client->out_buffer);
+  client->out_buffer = NULL;
+  client->out_buffer_len = 0;
+  client->out_buffer_sent = 0;
+  return 0;
 }
 
 int send_404(client_t *client) {
