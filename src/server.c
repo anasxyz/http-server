@@ -19,8 +19,8 @@
 
 #include "config.h"
 #include "mime.h"
-#include "util.h"
 #include "server.h"
+#include "util.h"
 
 GHashTable *client_map;
 
@@ -28,7 +28,7 @@ volatile sig_atomic_t shutdown_flag = 0;
 
 atomic_int *total_connections;
 
-// 
+//
 // STATE MACHINE
 //
 
@@ -83,7 +83,7 @@ int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events) {
   return 0;
 }
 
-// 
+//
 // CONNECTION HANDLING
 //
 
@@ -230,7 +230,7 @@ void close_connection(client_t *client, int epoll_fd, int *active_connections) {
   printf("Total active connections: %d\n", atomic_load(total_connections));
 }
 
-// 
+//
 // REQUEST HANDLING
 //
 
@@ -445,7 +445,7 @@ int read_client_request(client_t *client) {
   }
 }
 
-// 
+//
 // RESPONSE HANDLING
 //
 
@@ -488,7 +488,7 @@ int find_file(client_t *client) {
       printf("No matching route found for %s on server %s port %d\n",
              client->request->request_line.uri, server->server_names[0],
              server->listen_port);
-			matched_route = NULL;
+      matched_route = NULL;
     } else {
       printf("Found matching route for %s on server %s port %d\n",
              client->request->request_line.uri, server->server_names[0],
@@ -551,7 +551,9 @@ int find_file(client_t *client) {
         if (realpath(final_path, NULL) != NULL) {
           final_path = realpath(final_path, NULL);
           break;
-        }
+        } else {
+					final_path = NULL;
+				}
       }
     } else if (request_path[strlen(request_path) - 1] != '/') {
       // try with the extension fallbacks if the request path doesn't end with a
@@ -563,7 +565,9 @@ int find_file(client_t *client) {
         if (realpath(final_path, NULL) != NULL) {
           final_path = realpath(final_path, NULL);
           break;
-        }
+        } else {
+					final_path = NULL;
+				}
       }
     }
   }
@@ -730,10 +734,10 @@ int serve_file(client_t *client, int use_sendfile) {
   // if sendfile is enabled, use sendfile() to send the file
   // if sendfile is disabled, use writes() to send the file
   if (use_sendfile) {
-		printf("Using sendfile.\n");
+    printf("Using sendfile.\n");
     status = send_file_with_sendfile(client);
   } else {
-		printf("Using writes.\n");
+    printf("Using writes.\n");
     status = send_file_with_writes(client);
   }
 
@@ -786,6 +790,35 @@ int send_body(client_t *client, const char *body, size_t body_len) {
   return write_status;
 }
 
+int send_404(client_t *client) {
+  int status = 1;
+
+  const char *body =
+      "<!DOCTYPE html><html><head><title>404 Not "
+      "Found</title></head><body><h1>404 Not Found</h1><p>The requested URL "
+      "was not found on this server.</p></body></html>";
+  size_t body_len = strlen(body);
+
+  // check if headers were already sent
+  if (!client->headers_sent) {
+    status = send_headers(client, 404, "Not Found", "text/html", body_len);
+    if (status != 0) {
+      return status;
+    }
+  }
+
+  // send the body
+  status = send_body(client, body, body_len);
+
+  if (status == 0) {
+    // full response (headers + body) is complete
+    // reset client for the next request.
+    client->headers_sent = false;
+  }
+
+  return status;
+}
+
 // main orchestrator function for writing client responses
 int write_client_response(client_t *client) {
   int status = 1;
@@ -795,6 +828,11 @@ int write_client_response(client_t *client) {
     // check if fild is already known
     if (client->file_fd == -1) {
       int find_file_status = find_file(client);
+
+      if (find_file_status != 0) {
+				status = send_404(client);
+				return status;
+      }
     }
 
     // get mime type for file
@@ -809,7 +847,7 @@ int write_client_response(client_t *client) {
     }
 
     // send file with preferred method (sendfile or write)
-		int use_sendfile = global_config->http->sendfile;
+    int use_sendfile = global_config->http->sendfile;
     status = serve_file(client, use_sendfile);
 
     return status;
@@ -839,7 +877,7 @@ int write_client_response(client_t *client) {
   }
 }
 
-// 
+//
 // SERVER PROCESS HANDLING
 //
 
