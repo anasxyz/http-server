@@ -113,7 +113,7 @@ int send_headers(client_t *client, int status_code, const char *status_message,
                  const char *content_type, size_t content_length);
 static int send_file_with_sendfile(client_t *client);
 static int send_file_with_writes(client_t *client);
-int send_file(client_t *client, bool use_sendfile);
+int serve_file(client_t *client, int use_sendfile);
 int send_body(client_t *client, const char *body, size_t body_len);
 int write_client_response(client_t *client);
 

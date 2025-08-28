@@ -715,7 +715,7 @@ static int send_file_with_writes(client_t *client) {
   return 0;
 }
 
-int send_file(client_t *client, bool use_sendfile) {
+int serve_file(client_t *client, int use_sendfile) {
   // if the file is fully sent, close it and reset fields
   if (client->file_offset >= client->file_size) {
     close(client->file_fd);
@@ -730,8 +730,10 @@ int send_file(client_t *client, bool use_sendfile) {
   // if sendfile is enabled, use sendfile() to send the file
   // if sendfile is disabled, use writes() to send the file
   if (use_sendfile) {
+		printf("Using sendfile.\n");
     status = send_file_with_sendfile(client);
   } else {
+		printf("Using writes.\n");
     status = send_file_with_writes(client);
   }
 
@@ -787,9 +789,9 @@ int send_body(client_t *client, const char *body, size_t body_len) {
 // main orchestrator function for writing client responses
 int write_client_response(client_t *client) {
   int status = 1;
-  bool serve_file = true;
+  bool serving_file = true;
 
-  if (serve_file) {
+  if (serving_file) {
     // check if fild is already known
     if (client->file_fd == -1) {
       int find_file_status = find_file(client);
@@ -807,7 +809,8 @@ int write_client_response(client_t *client) {
     }
 
     // send file with preferred method (sendfile or write)
-    status = send_file(client, false);
+		int use_sendfile = global_config->http->sendfile;
+    status = serve_file(client, use_sendfile);
 
     return status;
   } else {

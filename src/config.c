@@ -177,7 +177,9 @@ void parse_config() {
         global_config->http->error_log_path = strdup(value);
       } else if (strcmp(key, "log_format") == 0) {
         global_config->http->log_format = strdup(value);
-      } else if (strcmp(key, "host.new") == 0) {
+      } else if (strcmp(key, "sendfile") == 0) {
+				global_config->http->sendfile = (strcmp(value, "on") == 0);
+			} else if (strcmp(key, "host.new") == 0) {
         // we are now in a server block
         state = SERVER;
         // increment the number of servers

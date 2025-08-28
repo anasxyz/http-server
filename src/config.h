@@ -66,6 +66,7 @@ typedef struct http_config {
   char *access_log_path;
   char *error_log_path;
   char *log_format;
+	int sendfile;
 
   server_config *servers;
   int num_servers;
@@ -78,6 +79,7 @@ typedef struct config {
   char *user;
   char *pid_file;
   char *log_file;
+
   http_config *http;
 } config;
 
