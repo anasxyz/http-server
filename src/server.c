@@ -474,7 +474,7 @@ static int append_to_buffer(client_t *client, const char *data, size_t len) {
 // main orchestrator function for reading and parsing client request into
 // complete request_t struct.
 // returns 0 on success.
-// returns -1 on partial read from reads().
+// returns 1 on partial read from reads().
 // returns -1 on failure or client disconnect.
 int read_client_request(client_t *client) {
   char temp_buffer[MAX_BUFFER_SIZE];
@@ -547,14 +547,18 @@ int read_client_request(client_t *client) {
  *
  */
 
+// checks if a path is a directory
 int is_directory(const char *path) {
   struct stat st;
   return (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
 }
 
+// finds the file to serve for the given client's request
+// TODO: add fallback extensions to config
+// TODO: improve control flow for finding routes
 int find_file(client_t *client) {
   server_config *server = client->parent_server;
-  route_config *matched_route;
+  route_config *matched_route = NULL;
 
   char **index_files;
   char *fallback_extensions[3] = {".html", ".htm", ".txt"};
@@ -564,44 +568,66 @@ int find_file(client_t *client) {
   char *request_path_with_content_dir;
   char *final_path;
 
+  printf("Request path: %s\n", request_path);
+
   // find route for this request's URI
-  for (int i = 0; i < server->num_routes; i++) {
-    matched_route = &server->routes[i];
-    if (strcmp(matched_route->uri, client->request->request_line.uri) == 0) {
-      // found a matching route
-      printf("Found matching route for %s\n",
-             client->request->request_line.uri);
-      break;
+  bool found_route = false;
+  if (server->num_routes > 0) {
+    for (int i = 0; i < server->num_routes; i++) {
+      matched_route = &server->routes[i];
+      if (strcmp(matched_route->uri, client->request->request_line.uri) == 0) {
+        // found a matching route
+        found_route = true;
+        break;
+      }
+    }
+
+    if (!found_route) {
+      printf("No matching route found for %s on server %s port %d\n",
+             client->request->request_line.uri, server->server_names[0],
+             server->listen_port);
+			matched_route = NULL;
+    } else {
+      printf("Found matching route for %s on server %s port %d\n",
+             client->request->request_line.uri, server->server_names[0],
+             server->listen_port);
     }
   }
 
   // get index files for this route
-  if (matched_route != NULL && matched_route->num_index_files != 0) {
-    // index files specified in route, use those
-    index_files = matched_route->index_files;
-  } else if (server->num_index_files != 0) {
-    // no index files specified in route, use server block index files
+  if (matched_route == NULL) {
+    printf("Using server default index files.\n");
     index_files = server->index_files;
-  } else {
-    // no index files specified, should be handled by check_valid_config()
+  } else if (matched_route) {
+    if (matched_route->num_index_files != 0) {
+      printf("Found index files configured for route %s. Using "
+             "route index files.\n",
+             client->request->request_line.uri);
+      index_files = server->index_files;
+    } else {
+      printf("No index files configured for route %s. Using server default "
+             "index files.\n",
+             client->request->request_line.uri);
+      index_files = server->index_files;
+    }
   }
 
-  // TODO: add fallback extensions to config
-  // get fallback extensions for this route
-
   // get content directory for this route
-  if (matched_route != NULL && matched_route->content_dir != NULL) {
-    // a specific content directory is defined in the matched route
-    content_dir = matched_route->content_dir;
-    printf("Found specific content dir: %s\n", content_dir);
-  } else if (server->content_dir != NULL) {
-    // a specific route directory, but the server has a default
+  if (matched_route == NULL) {
+    printf("Using server default content dir.\n");
     content_dir = server->content_dir;
-    printf("Found default content dir: %s\n", content_dir);
-  } else {
-    // a route or server content directory specified. use hardcoded default
-    content_dir = "/var/www/";
-    printf("Didn't find any content dir. Using hardcoded: %s\n", content_dir);
+  } else if (matched_route) {
+    if (matched_route->content_dir != NULL) {
+      printf("Found content dir configured for route %s. Using "
+             "route content dir.\n",
+             client->request->request_line.uri);
+      content_dir = matched_route->content_dir;
+    } else {
+      printf("No content dir configured for route %s. Using server "
+             "default content dir.\n",
+             client->request->request_line.uri);
+      content_dir = server->content_dir;
+    }
   }
 
   // try first with the request path
@@ -859,7 +885,7 @@ int send_body(client_t *client, const char *body, size_t body_len) {
 // main orchestrator function for writing client responses
 int write_client_response(client_t *client) {
   int status = 1;
-  bool serve_file = false;
+  bool serve_file = true;
 
   if (serve_file) {
     // check if fild is already known
@@ -987,7 +1013,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
           logs('W', "Server is full. Rejecting connection.", NULL);
         }
       } else {
-				// handle existing connection
+        // handle existing connection
         // get client from client map
         client_t *client = (client_t *)g_hash_table_lookup(
             client_map, GINT_TO_POINTER(current_fd));
@@ -995,20 +1021,22 @@ void run_worker(int *listen_sockets, int num_sockets) {
         if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
           transition_state(client, epoll_fd, CLOSING);
           close_connection(client, epoll_fd, &active_connections);
-        } 
+        }
 
-				if (events[i].events & EPOLLIN) {
+        if (events[i].events & EPOLLIN) {
           // it's a read event
           int read_status = read_client_request(client);
           if (read_status == 0) {
             // read returns 0, which means success
             // transition epoll event to EPOLLOUT and set state to WRITING
-            logs('D', "Fully read. No more data to read from Client %s", NULL, client->ip);
+            logs('D', "Fully read. No more data to read from Client %s", NULL,
+                 client->ip);
             transition_state(client, epoll_fd, WRITING);
           } else if (read_status == 1) {
             // read returns 1, which means more data is expected, stay in
             // READING state
-            logs('D', "Partial read. More data to read from Client %s", NULL, client->ip);
+            logs('D', "Partial read. More data to read from Client %s", NULL,
+                 client->ip);
             continue;
           } else {
             // read returns -1, which means error, so close connection
@@ -1017,9 +1045,9 @@ void run_worker(int *listen_sockets, int num_sockets) {
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
           }
-        } 
+        }
 
-				if (events[i].events & EPOLLOUT) {
+        if (events[i].events & EPOLLOUT) {
           // it's a write event
           int write_status = write_client_response(client);
           if (write_status == 0) {
@@ -1027,7 +1055,8 @@ void run_worker(int *listen_sockets, int num_sockets) {
             // transition epoll event to EPOLLIN and set state to READING
             int keepalive = 1; // obviously would be replaced when we actually
                                // pase the keep-alive header
-            logs('D', "Full write. No more data to write to Client %s", NULL, client->ip);
+            logs('D', "Full write. No more data to write to Client %s", NULL,
+                 client->ip);
             if (keepalive == 1) {
               transition_state(client, epoll_fd, READING);
             } else {
@@ -1035,18 +1064,19 @@ void run_worker(int *listen_sockets, int num_sockets) {
               close_connection(client, epoll_fd, &active_connections);
             }
           } else if (write_status == 1) {
-						// write returns 1, which means more data is expected, stay in
-						// WRITING state
-						logs('D', "Partial write. More data to write to Client %s", NULL, client->ip);
-						continue;
-					} else {
+            // write returns 1, which means more data is expected, stay in
+            // WRITING state
+            logs('D', "Partial write. More data to write to Client %s", NULL,
+                 client->ip);
+            continue;
+          } else {
             // write returns -1, which means error, so close connection
             logs('E', "write_client_response() failed. Output: %s", NULL,
                  write_status);
             transition_state(client, epoll_fd, CLOSING);
             close_connection(client, epoll_fd, &active_connections);
           }
-        } 
+        }
       }
     }
   }
