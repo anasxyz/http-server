@@ -12,7 +12,7 @@
 
 // max buffer size for reading/writing
 // probably obsolete after switching to dynamic buffers
-#define MAX_BUFFER_SIZE 16384 // 16 KB
+#define MAX_BUFFER_SIZE 8192 // 8KB
 
 // request line struct
 // eg GET /index.html HTTP/1.1
@@ -52,14 +52,12 @@ typedef struct {
   // fields for sending data
   char *out_buffer;
   size_t out_buffer_len;
-  size_t out_buffer_size;
   size_t out_buffer_sent;
 
   // fields for state
   state_e state;
 
   // fields for sending headers
-  bool headers_ready;
   bool headers_sent;
 
   // fields for sending files
@@ -68,10 +66,10 @@ typedef struct {
   off_t file_offset;
   off_t file_size;
 
-  // pointer to parent server
+	// pointer to parent server config
   server_config *parent_server;
-
-  // pointer to client's parsed request
+	
+	// pointer to client's parsed request
   request_t *request;
 } client_t;
 
@@ -98,23 +96,25 @@ void close_connection(client_t *client, int epoll_fd, int *active_connections);
 
 char *find_newline(char *buffer, size_t len);
 int parse_request(char *buffer, size_t buffer_len, request_t *request);
+static ssize_t reads(client_t *client, char *buffer);
+static int append_to_buffer(client_t *client, const char *data, size_t len);
 int read_client_request(client_t *client);
 
 //
 // RESPONSE HANDLING
 //
 
+int is_directory(const char *path);
+int find_file(client_t *client);
 int writes(client_t *client, const char *buffer, size_t *offset, size_t len);
-void get_http_date(char *buffer, size_t buffer_size);
 int build_headers(client_t *client, int status_code, const char *status_message,
-                  const char *date, const char *content_type,
-                  size_t content_length);
-int send_file_response(client_t *client, bool use_send_file, int status_code,
-                       const char *date, const char *status_message,
-                       const char *content_type, size_t content_length);
-int send_response(client_t *client, int status_code, const char *status_message,
-                  const char *date, const char *content_type,
-                  size_t content_length);
+                  const char *content_type, size_t content_length);
+int send_headers(client_t *client, int status_code, const char *status_message,
+                 const char *content_type, size_t content_length);
+static int send_file_with_sendfile(client_t *client);
+static int send_file_with_writes(client_t *client);
+int send_file(client_t *client, bool use_sendfile);
+int send_body(client_t *client, const char *body, size_t body_len);
 int write_client_response(client_t *client);
 
 //

@@ -20,112 +20,17 @@
 #include "config.h"
 #include "mime.h"
 #include "util.h"
-
-#define MAX_EVENTS 1024
-#define MAX_BUFFER_SIZE 8192
+#include "server.h"
 
 GHashTable *client_map;
 
 volatile sig_atomic_t shutdown_flag = 0;
 
-void sigint_handler(int signum) { shutdown_flag = 1; }
-
 atomic_int *total_connections;
 
-typedef struct {
-  char *key;
-  char *value;
-} header_t;
-
-typedef struct {
-  char *method;
-  char *uri;
-  char *version;
-} request_line_t;
-
-typedef struct {
-  request_line_t request_line;
-  GHashTable *headers;
-  size_t num_headers;
-  char *body;
-  size_t body_len;
-} request_t;
-
-typedef struct {
-  char *version;
-  int status_code;
-  char *status_message;
-} response_line_t;
-
-typedef struct {
-  response_line_t response_line;
-  header_t *headers;
-  size_t num_headers;
-} response_t;
-
-typedef enum {
-  READING,
-  WRITING,
-  CLOSING,
-} state_e;
-
-typedef struct {
-  // fields for socket
-  int fd;
-  char *ip;
-
-  // fields for receiving data
-  char *in_buffer;
-  size_t in_buffer_len;
-  size_t in_buffer_size;
-
-  // fields for sending data
-  char *out_buffer;
-  size_t out_buffer_len;
-  size_t out_buffer_sent;
-
-  // fields for state
-  state_e state;
-
-  // fields for sending headers
-  bool headers_sent;
-
-  // fields for sending files
-  int file_fd;
-  char *file_path;
-  off_t file_offset;
-  off_t file_size;
-
-  server_config *parent_server; // pointer to parent server config
-
-  request_t *request;
-} client_t;
-
-// forward declarations of all functions in this file
-void transition_state(client_t *client, int epoll_fd, state_e new_state);
-int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events);
-int handle_new_connection(int connection_socket, int epoll_fd,
-                          int *listen_sockets, int *active_connections);
-void close_connection(client_t *client, int epoll_fd, int *active_connections);
-
-int read_client_request(client_t *client);
-
-void serve_file(client_t *client, int epoll_fd);
-void run_worker(int *listen_sockets, int num_sockets);
-void init_sockets(int *listen_sockets);
-void fork_workers(int *listen_sockets);
-void server_cleanup(int *listen_sockets);
-void check_valid_config();
-int build_headers(client_t *client, int status_code, const char *status_message,
-                  const char *content_type, size_t content_length);
-
-void free_client(client_t *client);
-void free_request(request_t *request);
-
-/*
- * STATE MACHINE
- *
- */
+// 
+// STATE MACHINE
+//
 
 const char *state_to_string(state_e state) {
   switch (state) {
@@ -178,10 +83,9 @@ int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events) {
   return 0;
 }
 
-/*
- * CONNECTION HANDLING
- *
- */
+// 
+// CONNECTION HANDLING
+//
 
 void initialise_client(client_t *client) {
   // initialise socket fields
@@ -326,10 +230,9 @@ void close_connection(client_t *client, int epoll_fd, int *active_connections) {
   printf("Total active connections: %d\n", atomic_load(total_connections));
 }
 
-/*
- * REQUEST HANDLING
- *
- */
+// 
+// REQUEST HANDLING
+//
 
 // helper function to find a newline sequence in a buffer.
 // returns a pointer to the newline sequence if found.
@@ -542,10 +445,9 @@ int read_client_request(client_t *client) {
   }
 }
 
-/*
- * RESPONSE HANDLING
- *
- */
+// 
+// RESPONSE HANDLING
+//
 
 // checks if a path is a directory
 int is_directory(const char *path) {
@@ -934,10 +836,9 @@ int write_client_response(client_t *client) {
   }
 }
 
-/*
- * SERVER PROCESS HANDLING
- *
- */
+// 
+// SERVER PROCESS HANDLING
+//
 
 int setup_epoll(int *listen_sockets, int num_sockets) {
   int epoll_fd = epoll_create1(0);
@@ -1216,6 +1117,8 @@ void clear_log_file() {
     fclose(log_file);
   }
 }
+
+void sigint_handler(int signum) { shutdown_flag = 1; }
 
 int main() {
   clear_log_file();
