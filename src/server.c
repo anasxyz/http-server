@@ -256,7 +256,7 @@ int parse_request(char *buffer, size_t buffer_len, request_t *request) {
   char *current_pos = buffer;
   char *end_of_line;
 
-	initialise_request(request);
+  initialise_request(request);
 
   // parse request line
   end_of_line = find_newline(current_pos, buffer_len - (current_pos - buffer));
@@ -697,32 +697,59 @@ static int send_file_with_sendfile(client_t *client) {
 
 //
 static int send_file_with_writes(client_t *client) {
-  char buffer[MAX_BUFFER_SIZE];
-  size_t remaining = client->file_size - client->file_offset;
-  size_t to_read = (remaining > sizeof(buffer)) ? sizeof(buffer) : remaining;
+  // if the file hasn't been mapped into the buffer yet
+  if (client->out_buffer == NULL) {
+    // determine how much data to read at a time
+    const size_t chunk_size = MAX_BUFFER_SIZE;
+    size_t bytes_to_read =
+        (client->file_size - client->file_offset) > chunk_size
+            ? chunk_size
+            : (client->file_size - client->file_offset);
 
-  ssize_t bytes_read = read(client->file_fd, buffer, to_read);
-  if (bytes_read <= 0) {
-    if (bytes_read < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        return 1;
-      }
+    if (bytes_to_read == 0) {
+      return 0;
+    }
+
+    client->out_buffer = malloc(bytes_to_read);
+    if (client->out_buffer == NULL) {
+      logs('E', "Failed to allocate memory for file chunk.", NULL);
       return -1;
     }
-    return 0;
+    client->out_buffer_len = bytes_to_read;
+    client->out_buffer_sent = 0;
+
+    // read a chunk from the file into the buffer
+    ssize_t bytes_read = pread(client->file_fd, client->out_buffer,
+                               bytes_to_read, client->file_offset);
+    if (bytes_read < 0) {
+      logs('E', "Failed to read from file.", NULL);
+      client->out_buffer = NULL;
+      return -1;
+    }
+    client->out_buffer_len = bytes_read;
   }
 
-  size_t write_offset = 0;
-  while (write_offset < bytes_read) {
-    int write_status = writes(client, buffer, &write_offset, bytes_read);
-    if (write_status != 0) {
-      client->file_offset += write_offset;
-      return write_status;
+  // send the buffered data/chunk
+  int write_status = writes(client, client->out_buffer,
+                            &client->out_buffer_sent, client->out_buffer_len);
+
+  // if the entire chunk has been sent, free it and update the file offset
+  if (write_status == 0) {
+    client->file_offset += client->out_buffer_len;
+    client->out_buffer = NULL;
+    client->out_buffer_len = 0;
+    client->out_buffer_sent = 0;
+    // check if the whole file is sent
+    if (client->file_offset >= client->file_size) {
+			// file transfer complete
+      return 0;
+    } else {
+			// more data to be sent
+      return 1; 
     }
   }
 
-  client->file_offset += bytes_read;
-  return 0;
+  return write_status;
 }
 
 int serve_file(client_t *client, int use_sendfile) {
@@ -855,10 +882,7 @@ int write_client_response(client_t *client) {
     // send file with preferred method (sendfile or write)
     int use_sendfile = global_config->http->sendfile;
     status = serve_file(client, use_sendfile);
-
-    if (client->file_path != NULL) {
-      free(client->file_path);
-    }
+    printf("Serve file status: %d\n", status);
 
     return status;
   } else {
