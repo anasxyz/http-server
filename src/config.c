@@ -171,9 +171,9 @@ void parse_config() {
         global_config->http->mime_types_path = strdup(value);
       } else if (strcmp(key, "default_type") == 0) {
         global_config->http->default_type = strdup(value);
-      } else if (strcmp(key, "access_log_path") == 0) {
+      } else if (strcmp(key, "access_log") == 0) {
         global_config->http->access_log_path = strdup(value);
-      } else if (strcmp(key, "error_log_path") == 0) {
+      } else if (strcmp(key, "error_log") == 0) {
         global_config->http->error_log_path = strdup(value);
       } else if (strcmp(key, "log_format") == 0) {
         global_config->http->log_format = strdup(value);
@@ -204,9 +204,9 @@ void parse_config() {
         continue;
       }
     } else if (state == SERVER) {
-      if (strcmp(key, "listen_port") == 0) {
+      if (strcmp(key, "listen") == 0) {
         current_server->listen_port = atoi(value);
-      } else if (strcmp(key, "server_name") == 0) {
+      } else if (strcmp(key, "name") == 0) {
         current_server->server_names =
             parse_string_list(value, &current_server->num_server_names);
         if (current_server->server_names == NULL &&
@@ -226,9 +226,9 @@ void parse_config() {
                "parse_config() failed.");
           exits();
         }
-      } else if (strcmp(key, "access_log_path") == 0) {
+      } else if (strcmp(key, "access_log") == 0) {
         current_server->access_log_path = strdup(value);
-      } else if (strcmp(key, "error_log_path") == 0) {
+      } else if (strcmp(key, "error_log") == 0) {
         current_server->error_log_path = strdup(value);
       } else if (strcmp(key, "log_format") == 0) {
         current_server->log_format = strdup(value);
@@ -317,7 +317,7 @@ void parse_config() {
         current_route->proxy_url = strdup(value);
       } else if (strcmp(key, "autoindex") == 0) {
         current_route->autoindex = (strcmp(value, "on") == 0);
-      } else if (strcmp(key, "allowed_ips") == 0) {
+      } else if (strcmp(key, "allow") == 0) {
         // TODO: handle CIDR notation
         // TODO: maybe read it from a file?
         current_route->allowed_ips =
@@ -328,7 +328,7 @@ void parse_config() {
                "parse_config() failed.");
           exits();
         }
-      } else if (strcmp(key, "denied_ips") == 0) {
+      } else if (strcmp(key, "deny") == 0) {
         // TODO: handle CIDR notation
         // TODO: maybe read it from a file?
         current_route->denied_ips =
@@ -339,9 +339,9 @@ void parse_config() {
                "parse_config() failed.");
           exits();
         }
-      } else if (strcmp(key, "return_status") == 0) {
+      } else if (strcmp(key, "return") == 0) {
         current_route->return_status = atoi(value);
-      } else if (strcmp(key, "return_url_text") == 0) {
+      } else if (strcmp(key, "redirect") == 0) {
         current_route->return_url_text = strdup(value);
       } else if (strcmp(key, "etag_header") == 0) {
         current_route->etag_header = strdup(value);
