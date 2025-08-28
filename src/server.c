@@ -76,7 +76,7 @@ void transition_state(client_t *client, int epoll_fd, state_e new_state) {
 int set_epoll(int epoll_fd, client_t *client, uint32_t epoll_events) {
   struct epoll_event event;
   event.events = epoll_events;
-  event.data.fd = client->fd;
+  event.data.ptr = client;
   if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &event) == -1) {
     return -1;
   }
@@ -171,7 +171,7 @@ int handle_new_connection(int connection_socket, int epoll_fd,
 
   // add client's socket to epoll instance
   event.events = EPOLLIN | EPOLLET;
-  event.data.fd = client->fd;
+  event.data.ptr = client;
   if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client->fd, &event) == -1) {
     logs('E', "Failed to add client socket to epoll.",
          "handle_new_connection(): epoll_ctl() failed.");
@@ -916,8 +916,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
       } else {
         // handle existing connection
         // get client from client map
-        client_t *client = (client_t *)g_hash_table_lookup(
-            client_map, GINT_TO_POINTER(current_fd));
+        client_t *client = (client_t *)events[i].data.ptr;
 
         if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
           transition_state(client, epoll_fd, CLOSING);
