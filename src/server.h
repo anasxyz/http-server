@@ -95,6 +95,7 @@ void close_connection(client_t *client, int epoll_fd, int *active_connections);
 //
 
 char *find_newline(char *buffer, size_t len);
+void initialise_request(request_t *request);
 int parse_request(char *buffer, size_t buffer_len, request_t *request);
 static ssize_t reads(client_t *client, char *buffer);
 static int append_to_buffer(client_t *client, const char *data, size_t len);

@@ -240,6 +240,15 @@ char *find_newline(char *buffer, size_t len) {
   return NULL;
 }
 
+void initialise_request(request_t *request) {
+  request->request_line.method = NULL;
+  request->request_line.uri = NULL;
+  request->request_line.version = NULL;
+  request->headers = NULL;
+  request->body = NULL;
+  request->body_len = 0;
+}
+
 // parses raw request from buffer into request_t struct.
 // returns 0 on success.
 // returns -1 on failure.
@@ -247,12 +256,7 @@ int parse_request(char *buffer, size_t buffer_len, request_t *request) {
   char *current_pos = buffer;
   char *end_of_line;
 
-  request->request_line.method = NULL;
-  request->request_line.uri = NULL;
-  request->request_line.version = NULL;
-  request->headers = NULL;
-  request->body = NULL;
-  request->body_len = 0;
+	initialise_request(request);
 
   // parse request line
   end_of_line = find_newline(current_pos, buffer_len - (current_pos - buffer));
@@ -824,7 +828,7 @@ int send_404(client_t *client) {
 // main orchestrator function for writing client responses
 int write_client_response(client_t *client) {
   int status = 1;
-  bool serving_file = false;
+  bool serving_file = true;
 
   if (serving_file) {
     // check if fild is already known
