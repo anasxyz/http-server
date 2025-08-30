@@ -124,14 +124,19 @@ int write_client_response(client_t *client);
 
 int setup_epoll(int *listen_sockets, int num_sockets);
 void run_worker(int *listen_sockets, int num_sockets);
+
 void init_sockets(int *listen_sockets);
-void fork_workers(int *listen_sockets);
-void sock_pcs_cleanup(int *listen_sockets);
+void fork_workers(int *listen_sockets, int num_workers);
+void master_cleanup(int *listen_sockets, int num_workers);
 void check_valid_config();
 void frees(void *ptr);
 void free_request(request_t *request);
 void free_client(client_t *client);
 void clear_log_file();
-void sigint_handler(int signum);
+
+void block_sigint();
+
+void master_sigint_handler(int signum);
+void worker_sigint_handler(int signum);
 
 #endif // _SERVER_H_

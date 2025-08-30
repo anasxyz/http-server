@@ -25,6 +25,7 @@
 GHashTable *client_map;
 
 volatile sig_atomic_t shutdown_flag = 0;
+pid_t *worker_pids;
 
 atomic_int *total_connections;
 
@@ -929,7 +930,18 @@ int setup_epoll(int *listen_sockets, int num_sockets) {
   return epoll_fd;
 }
 
+void unblock_sigint() {
+  sigset_t mask;
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGINT);
+  sigprocmask(SIG_UNBLOCK, &mask, NULL);
+}
+
 void run_worker(int *listen_sockets, int num_sockets) {
+  // unblock SIGINT and set the handler
+  unblock_sigint();
+  signal(SIGINT, worker_sigint_handler);
+
   // setup epoll
   struct epoll_event events[MAX_EVENTS];
   int num_events;
@@ -1053,7 +1065,6 @@ void run_worker(int *listen_sockets, int num_sockets) {
   g_hash_table_destroy(client_map);
   atexit(free_config);
   atexit(free_mime_types);
-  munmap(total_connections, sizeof(atomic_int));
   exit(0);
 }
 
@@ -1070,34 +1081,55 @@ void init_sockets(int *listen_sockets) {
   }
 }
 
-void fork_workers(int *listen_sockets) {
-  // fork worker processes
-  for (int i = 0; i < global_config->worker_processes; i++) {
+void fork_workers(int *listen_sockets, int num_workers) {
+  worker_pids = malloc(num_workers * sizeof(pid_t));
+  if (!worker_pids) {
+    logs('E', "Failed to allocate memory for worker PIDs.", NULL);
+    exits();
+  }
+
+	// the master process should handle SIGINT to signal its children
+	signal(SIGINT, master_sigint_handler);
+
+  for (int i = 0; i < num_workers; i++) {
     pid_t pid = fork();
     if (pid < 0) {
       logs('E', "Failed to fork worker process.", NULL);
       exits();
     }
-    // child process
-    if (pid == 0) {
-      logs('I', "Worker process %d started (pid %d).", NULL, i, getpid());
+    if (pid == 0) {            // child process
+      signal(SIGINT, SIG_DFL); // child reverts to default SIGINT handler
       run_worker(listen_sockets, global_config->http->num_servers);
-      exits();
+      exit(0); // this exit is for safety in case run_worker()'s exit(0) doesn't
+               // work
     }
+    worker_pids[i] = pid; // parent stores child's PID
   }
 }
 
-void sock_pcs_cleanup(int *listen_sockets) {
-  // master process waits for all childen to finish
-  // TODO: handle signals
-  for (int i = 0; i < global_config->worker_processes; i++) {
-    wait(NULL);
+// cleans up the master process
+void master_cleanup(int *listen_sockets, int num_workers) {
+  int status;
+  printf("Master Process %d: Waiting for all workers to terminate...\n",
+         getpid());
+  // master waits for all children to finish
+  for (int i = 0; i < num_workers; i++) {
+    waitpid(worker_pids[i], &status, 0);
+    printf("Master Process %d: Worker with PID %d terminated.\n", getpid(),
+           worker_pids[i]);
+    logs('I', "Worker process (pid %d) terminated.", NULL, worker_pids[i]);
   }
 
-  // clean up
+  free(worker_pids);
+
+  // clean up listening sockets
   for (int i = 0; i < global_config->http->num_servers; i++) {
     close(listen_sockets[i]);
   }
+
+  atexit(free_config);
+  atexit(free_mime_types);
+  munmap(total_connections, sizeof(atomic_int));
 }
 
 void check_valid_config() {
@@ -1207,14 +1239,31 @@ void clear_log_file() {
   }
 }
 
-void sigint_handler(int signum) { shutdown_flag = 1; }
+void master_sigint_handler(int signum) {
+  if (worker_pids == NULL) {
+    return;
+  }
+  logs('I', "Master: Received SIGINT. Signalling workers to shut down...",
+       NULL);
+  printf("Master: Received SIGINT. Signalling workers to shut down...\n");
+  for (int i = 0; i < global_config->worker_processes; i++) {
+    if (worker_pids[i] > 0) {
+      printf("Master Process %d: Sending SIGINT to Worker %d...\n", getpid(),
+             worker_pids[i]); // 🌟 NEW
+      kill(worker_pids[i], SIGINT);
+    }
+  }
+}
 
-int main() {
-  clear_log_file();
+// signal handler that runs only in the workers
+void worker_sigint_handler(int signum) { shutdown_flag = 1; }
 
-  logs('I', "Starting server...", NULL);
-  signal(SIGINT, sigint_handler);
+void cleanup_shm() {
+  const char *shm_name = "/server_connections";
+  shm_unlink(shm_name);
+}
 
+void setup_total_connections() {
   const char *shm_name = "/server_connections";
   int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
   if (shm_fd == -1) {
@@ -1222,39 +1271,66 @@ int main() {
     exit(EXIT_FAILURE);
   }
   ftruncate(shm_fd, sizeof(atomic_int));
-
   total_connections = mmap(NULL, sizeof(atomic_int), PROT_READ | PROT_WRITE,
                            MAP_SHARED, shm_fd, 0);
   if (total_connections == MAP_FAILED) {
     perror("ERROR: mmap failed");
     exit(EXIT_FAILURE);
   }
-
   atomic_store(total_connections, 0);
 
-  // 1. load config and mime types
+  atexit(cleanup_shm);
+}
+
+void block_sigint() {
+  sigset_t mask;
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGINT);
+  sigprocmask(SIG_BLOCK, &mask, NULL);
+}
+
+// This is the main orchestrator for the master process.
+void master_process_loop(int *listen_sockets, int num_workers) {
+  // Set the master's signal handler
+  signal(SIGINT, master_sigint_handler);
+
+  // Fork the workers
+  fork_workers(listen_sockets, num_workers);
+
+  // Master process enters an infinite loop, waiting for signals
+  // This is where it will be "paused"
+  while (shutdown_flag == 0) {
+    pause();
+  }
+
+  // After the shutdown signal is received and the loop breaks,
+  // the master proceeds to clean up
+  master_cleanup(listen_sockets, num_workers);
+}
+
+int main() {
+  clear_log_file();
+  logs('I', "Starting server...", NULL);
+
+  // block SIGINT before forking
+  block_sigint();
+	signal(SIGINT, master_sigint_handler);
+
+  // 1. setup shared memory for total connections
+  setup_total_connections();
+
+  // 2. load and validate configuration
   load_config();
   load_mime_types(global_config->http->mime_types_path);
-
-  // 2. check if config is valid
   check_valid_config();
 
   // 3. setup listening sockets
   int listen_sockets[global_config->http->num_servers];
-
-  // 4. fill socket array with server block sockets
   init_sockets(listen_sockets);
 
-  // 5. fork worker processes
-  fork_workers(listen_sockets);
+  master_process_loop(listen_sockets, global_config->worker_processes);
 
-  // 6. clean up server resources
-  sock_pcs_cleanup(listen_sockets);
-
-  // 7. free_config at exit for master process
-  atexit(free_config);
-  atexit(free_mime_types);
-  shm_unlink(shm_name);
+  // 6. final master cleanup
   logs('I', "Server exiting.", NULL);
 
   return 0;
