@@ -698,13 +698,6 @@ static int send_file_with_sendfile(client_t *client) {
     // bytes_sent is added automatically to client->file_offset
   }
 
-  // File fully sent
-  close(client->file_fd);
-  client->file_fd = -1;
-  client->file_offset = 0;
-  client->file_size = 0;
-  client->headers_sent = false;
-
   return 0;
 }
 
@@ -750,13 +743,6 @@ static int send_file_with_writes(client_t *client) {
     client->out_buffer_sent = 0;
   }
 
-  // Entire file sent
-  close(client->file_fd);
-  client->file_fd = -1;
-  client->file_offset = 0;
-  client->file_size = 0;
-  client->headers_sent = false;
-
   return 0;
 }
 
@@ -787,11 +773,13 @@ int serve_file(client_t *client, int use_sendfile) {
   }
 
   if (client->file_offset >= client->file_size || status == 0) {
+    // File fully sent
     close(client->file_fd);
     client->file_fd = -1;
     client->file_offset = 0;
     client->file_size = 0;
     client->headers_sent = false;
+
     return 0;
   }
 
