@@ -935,12 +935,12 @@ void unblock_sigint() {
   sigemptyset(&mask);
   sigaddset(&mask, SIGINT);
   sigprocmask(SIG_UNBLOCK, &mask, NULL);
+  signal(SIGINT, worker_sigint_handler);
 }
 
 void run_worker(int *listen_sockets, int num_sockets) {
   // unblock SIGINT and set the handler
   unblock_sigint();
-  signal(SIGINT, worker_sigint_handler);
 
   // setup epoll
   struct epoll_event events[MAX_EVENTS];
