@@ -627,7 +627,7 @@ int build_headers(client_t *client, int status_code, const char *status_message,
   const char *header_template = "HTTP/1.1 %d %s\r\n"
                                 "Content-Type: %s\r\n"
                                 "Content-Length: %zu\r\n"
-                                "Connection: keep-alive\r\n"
+                                "Connection: close\r\n"
                                 "\r\n";
 
   size_t required_size =
@@ -906,6 +906,27 @@ int write_client_response(client_t *client) {
 // SERVER PROCESS HANDLING
 //
 
+// signal handler for the master process
+void master_sigint_handler(int signum) {
+  if (worker_pids == NULL) {
+    return;
+  }
+  logs('I', "Master: Received SIGINT. Signalling workers to shut down...",
+       NULL);
+  printf("Master: Received SIGINT. Signalling workers to shut down...\n");
+  for (int i = 0; i < global_config->worker_processes; i++) {
+    if (worker_pids[i] > 0) {
+      printf("Master Process %d: Sending SIGINT to Worker %d...\n", getpid(),
+             worker_pids[i]);
+      kill(worker_pids[i], SIGINT);
+    }
+  }
+  shutdown_flag = 1; // importatnt for breaking the loop
+}
+
+// signal handler that runs only in the workers
+void worker_sigint_handler(int signum) { shutdown_flag = 1; }
+
 int setup_epoll(int *listen_sockets, int num_sockets) {
   int epoll_fd = epoll_create1(0);
   if (epoll_fd == -1) {
@@ -914,11 +935,12 @@ int setup_epoll(int *listen_sockets, int num_sockets) {
     exits();
   }
 
-  // add the listening sockets to the epoll instance
   struct epoll_event event;
+
   for (int i = 0; i < num_sockets; i++) {
     event.events = EPOLLIN | EPOLLET | EPOLLEXCLUSIVE;
     event.data.fd = listen_sockets[i];
+
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_sockets[i], &event) == -1) {
       logs('E', "Worker failed to register listening socket.",
            "run_worker(): epoll_ctl() failed.");
@@ -926,30 +948,28 @@ int setup_epoll(int *listen_sockets, int num_sockets) {
       exits();
     }
   }
-
   return epoll_fd;
 }
 
+// unblocks SIGINT (used in workers)
 void unblock_sigint() {
   sigset_t mask;
   sigemptyset(&mask);
   sigaddset(&mask, SIGINT);
   sigprocmask(SIG_UNBLOCK, &mask, NULL);
-  signal(SIGINT, worker_sigint_handler);
 }
 
+// worker process main loop
 void run_worker(int *listen_sockets, int num_sockets) {
-  // unblock SIGINT and set the handler
+  // unblock SIGINT and set the handler for the worker
   unblock_sigint();
+  signal(SIGINT, worker_sigint_handler);
 
-  // setup epoll
   struct epoll_event events[MAX_EVENTS];
   int num_events;
   int epoll_fd = setup_epoll(listen_sockets, num_sockets);
-
   int active_connections = 0;
 
-  // create client_map
   client_map = g_hash_table_new(g_direct_hash, g_direct_equal);
   if (client_map == NULL) {
     logs('E', "Worker failed to create client_map.",
@@ -973,8 +993,6 @@ void run_worker(int *listen_sockets, int num_sockets) {
 
     for (int i = 0; i < num_events; i++) {
       int current_fd = events[i].data.fd;
-
-      // check if event is on a listening socket
       int is_listening_socket = 0;
       for (int j = 0; j < num_sockets; j++) {
         if (current_fd == listen_sockets[j]) {
@@ -984,14 +1002,11 @@ void run_worker(int *listen_sockets, int num_sockets) {
       }
 
       if (is_listening_socket) {
-        // handle new connection
         if (handle_new_connection(current_fd, epoll_fd, listen_sockets,
                                   &active_connections) == -1) {
           logs('W', "Server is full. Rejecting connection.", NULL);
         }
       } else {
-        // handle existing connection
-        // get client from client map
         client_t *client = (client_t *)events[i].data.ptr;
 
         if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
@@ -1001,22 +1016,17 @@ void run_worker(int *listen_sockets, int num_sockets) {
         }
 
         if (events[i].events & EPOLLIN) {
-          // it's a read event
           int read_status = read_client_request(client);
+
           if (read_status == 0) {
-            // read returns 0, which means success
-            // transition epoll event to EPOLLOUT and set state to WRITING
             logs('D', "Fully read. No more data to read from Client %s", NULL,
                  client->ip);
             transition_state(client, epoll_fd, WRITING);
           } else if (read_status == 1) {
-            // read returns 1, which means more data is expected, stay in
-            // READING state
             logs('D', "Partial read. More data to read from Client %s", NULL,
                  client->ip);
             continue;
           } else {
-            // read returns -1, which means error, so close connection
             logs('E', "read_client_request() failed. Output: %s", NULL,
                  read_status);
             transition_state(client, epoll_fd, CLOSING);
@@ -1026,15 +1036,13 @@ void run_worker(int *listen_sockets, int num_sockets) {
         }
 
         if (events[i].events & EPOLLOUT) {
-          // it's a write event
           int write_status = write_client_response(client);
+
           if (write_status == 0) {
-            // write returns 0, which means success
-            // transition epoll event to EPOLLIN and set state to READING
-            int keepalive = 1; // obviously would be replaced when we actually
-                               // pase the keep-alive header
+            int keepalive = 0;
             logs('D', "Full write. No more data to write to Client %s", NULL,
                  client->ip);
+
             if (keepalive == 1) {
               transition_state(client, epoll_fd, READING);
             } else {
@@ -1043,13 +1051,10 @@ void run_worker(int *listen_sockets, int num_sockets) {
               continue;
             }
           } else if (write_status == 1) {
-            // write returns 1, which means more data is expected, stay in
-            // WRITING state
             logs('D', "Partial write. More data to write to Client %s", NULL,
                  client->ip);
             continue;
           } else {
-            // write returns -1, which means error, so close connection
             logs('E', "write_client_response() failed. Output: %s", NULL,
                  write_status);
             transition_state(client, epoll_fd, CLOSING);
@@ -1068,6 +1073,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
   exit(0);
 }
 
+// initialises listening sockets for all configured servers
 void init_sockets(int *listen_sockets) {
   server_config *servers = global_config->http->servers;
 
@@ -1075,12 +1081,14 @@ void init_sockets(int *listen_sockets) {
     listen_sockets[i] = setup_listening_socket(servers[i].listen_port);
     logs('I', "%s listening on port %d.", NULL, servers[i].server_names[0],
          servers[i].listen_port);
+
     if (listen_sockets[i] == -1) {
       exits();
     }
   }
 }
 
+// forks worker processes
 void fork_workers(int *listen_sockets, int num_workers) {
   worker_pids = malloc(num_workers * sizeof(pid_t));
   if (!worker_pids) {
@@ -1088,20 +1096,21 @@ void fork_workers(int *listen_sockets, int num_workers) {
     exits();
   }
 
-	// the master process should handle SIGINT to signal its children
-	signal(SIGINT, master_sigint_handler);
-
   for (int i = 0; i < num_workers; i++) {
     pid_t pid = fork();
     if (pid < 0) {
       logs('E', "Failed to fork worker process.", NULL);
       exits();
     }
-    if (pid == 0) {            // child process
-      signal(SIGINT, SIG_DFL); // child reverts to default SIGINT handler
+
+    if (pid == 0) { // child process
+      // child reverts to default SIGINT handler before run_worker() sets its
+      // own
+      signal(SIGINT, SIG_DFL);
+			printf("Worker process %d started.\n", getpid());
+			logs('I', "Worker process %d started.", NULL, getpid());
       run_worker(listen_sockets, global_config->http->num_servers);
-      exit(0); // this exit is for safety in case run_worker()'s exit(0) doesn't
-               // work
+      exit(0);
     }
     worker_pids[i] = pid; // parent stores child's PID
   }
@@ -1112,17 +1121,17 @@ void master_cleanup(int *listen_sockets, int num_workers) {
   int status;
   printf("Master Process %d: Waiting for all workers to terminate...\n",
          getpid());
-  // master waits for all children to finish
+  logs('I', "Master Process %d: Waiting for all workers to terminate...\n",
+       NULL, getpid());
+
   for (int i = 0; i < num_workers; i++) {
     waitpid(worker_pids[i], &status, 0);
     printf("Master Process %d: Worker with PID %d terminated.\n", getpid(),
            worker_pids[i]);
     logs('I', "Worker process (pid %d) terminated.", NULL, worker_pids[i]);
   }
-
   free(worker_pids);
 
-  // clean up listening sockets
   for (int i = 0; i < global_config->http->num_servers; i++) {
     close(listen_sockets[i]);
   }
@@ -1132,21 +1141,21 @@ void master_cleanup(int *listen_sockets, int num_workers) {
   munmap(total_connections, sizeof(atomic_int));
 }
 
+// validates the server configuration
 void check_valid_config() {
   server_config *servers = global_config->http->servers;
   int num_servers = global_config->http->num_servers;
 
-  // --- global config checks ---
   if (num_servers == 0) {
     logs('E', "No servers configured.", NULL);
     exits();
   }
+
   if (global_config->worker_processes == 0) {
     logs('E', "No worker processes configured.", NULL);
     exits();
   }
 
-  // --- server config checks ---
   for (int i = 0; i < num_servers; i++) {
     if (!servers[i].server_names[0]) {
       char default_name[32];
@@ -1161,6 +1170,7 @@ void check_valid_config() {
            servers[i].server_names[0]);
       exits();
     }
+
     if (servers[i].listen_port < 1024) {
       logs('E',
            "Invalid port number. Configure a different port for %s (>1024).",
@@ -1170,6 +1180,7 @@ void check_valid_config() {
   }
 }
 
+// memory deallocation functions (correct as-is)
 void frees(void *ptr) {
   if (ptr != NULL) {
     free(ptr);
@@ -1177,58 +1188,33 @@ void frees(void *ptr) {
 }
 
 void free_request(request_t *request) {
-  if (request == NULL) {
+  if (request == NULL)
     return;
-  }
-
-  if (request->request_line.method != NULL) {
+  if (request->request_line.method != NULL)
     frees(request->request_line.method);
-  }
-
-  if (request->request_line.uri != NULL) {
+  if (request->request_line.uri != NULL)
     frees(request->request_line.uri);
-  }
-
-  if (request->request_line.version != NULL) {
+  if (request->request_line.version != NULL)
     frees(request->request_line.version);
-  }
-
-  if (request->headers != NULL) {
+  if (request->headers != NULL)
     g_hash_table_destroy(request->headers);
-  }
-
-  if (request->body != NULL) {
+  if (request->body != NULL)
     frees(request->body);
-  }
-
-  if (request != NULL) {
-    frees(request);
-  }
+  frees(request);
 }
 
 void free_client(client_t *client) {
-  if (client == NULL) {
+  if (client == NULL)
     return;
-  }
-
-  if (client->file_fd != -1) {
+  if (client->file_fd != -1)
     close(client->file_fd);
-  }
-
-  if (client->ip != NULL) {
+  if (client->ip != NULL)
     frees(client->ip);
-  }
-
-  if (client->in_buffer != NULL) {
+  if (client->in_buffer != NULL)
     frees(client->in_buffer);
-  }
-
-  if (client->out_buffer != NULL) {
+  if (client->out_buffer != NULL)
     frees(client->out_buffer);
-  }
-
   free_request(client->request);
-
   frees(client);
 }
 
@@ -1239,30 +1225,12 @@ void clear_log_file() {
   }
 }
 
-void master_sigint_handler(int signum) {
-  if (worker_pids == NULL) {
-    return;
-  }
-  logs('I', "Master: Received SIGINT. Signalling workers to shut down...",
-       NULL);
-  printf("Master: Received SIGINT. Signalling workers to shut down...\n");
-  for (int i = 0; i < global_config->worker_processes; i++) {
-    if (worker_pids[i] > 0) {
-      printf("Master Process %d: Sending SIGINT to Worker %d...\n", getpid(),
-             worker_pids[i]); // 🌟 NEW
-      kill(worker_pids[i], SIGINT);
-    }
-  }
-}
-
-// signal handler that runs only in the workers
-void worker_sigint_handler(int signum) { shutdown_flag = 1; }
-
 void cleanup_shm() {
   const char *shm_name = "/server_connections";
   shm_unlink(shm_name);
 }
 
+// shared memory setup
 void setup_total_connections() {
   const char *shm_name = "/server_connections";
   int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
@@ -1278,32 +1246,32 @@ void setup_total_connections() {
     exit(EXIT_FAILURE);
   }
   atomic_store(total_connections, 0);
-
   atexit(cleanup_shm);
 }
 
-void block_sigint() {
-  sigset_t mask;
-  sigemptyset(&mask);
-  sigaddset(&mask, SIGINT);
-  sigprocmask(SIG_BLOCK, &mask, NULL);
-}
-
-// This is the main orchestrator for the master process.
+// master process main loop **CORRECTED**
 void master_process_loop(int *listen_sockets, int num_workers) {
-  // Set the master's signal handler
+  // set the master's signal handler
   signal(SIGINT, master_sigint_handler);
 
-  // Fork the workers
+  // fork the workers
   fork_workers(listen_sockets, num_workers);
 
-  // Master process enters an infinite loop, waiting for signals
-  // This is where it will be "paused"
+  // this is the correct way to wait for a signal
+  sigset_t mask;
+  sigemptyset(&mask);
+
+  // master process enters a loop waiting for signals
   while (shutdown_flag == 0) {
-    pause();
+    // okay so temporarily block no signals (an empty set) and wait for any
+    // signal as far as i know, this is a common pattern to create a simple, non
+    // CPU intensive signal loop. if a signal is received, like SIGINT, the
+    // handler is called, and after it returns, the loop condition is re
+    // evaluated
+    sigsuspend(&mask);
   }
 
-  // After the shutdown signal is received and the loop breaks,
+  // after the shutdown signal is received and the loop breaks,
   // the master proceeds to clean up
   master_cleanup(listen_sockets, num_workers);
 }
@@ -1312,26 +1280,20 @@ int main() {
   clear_log_file();
   logs('I', "Starting server...", NULL);
 
-  // block SIGINT before forking
-  block_sigint();
-	signal(SIGINT, master_sigint_handler);
+  // removed blocking SIGINT here because there's apparently no need to manually
+  // block/unblock signals here because sigsuspend in the master_process_loop
+  // handles this
 
-  // 1. setup shared memory for total connections
   setup_total_connections();
-
-  // 2. load and validate configuration
   load_config();
   load_mime_types(global_config->http->mime_types_path);
   check_valid_config();
 
-  // 3. setup listening sockets
   int listen_sockets[global_config->http->num_servers];
   init_sockets(listen_sockets);
 
   master_process_loop(listen_sockets, global_config->worker_processes);
 
-  // 6. final master cleanup
   logs('I', "Server exiting.", NULL);
-
   return 0;
 }
