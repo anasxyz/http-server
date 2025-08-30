@@ -187,6 +187,8 @@ int handle_new_connection(int connection_socket, int epoll_fd,
        client->ip, client->fd, client->parent_server->server_names[0],
        client->parent_server->listen_port);
 
+  printf("Client fd %d connected.\n", client->fd);
+
   (*active_connections)++;
   atomic_fetch_add(total_connections, 1);
 
@@ -214,6 +216,9 @@ void close_connection(client_t *client, int epoll_fd, int *active_connections) {
   close(client->fd);
 
   g_hash_table_remove(client_map, GINT_TO_POINTER(client->fd));
+
+  logs('I', "Client fd %d disconnected.", NULL, client->fd);
+  printf("Client fd %d disconnected.\n", client->fd);
 
   free_client(client);
 
@@ -913,11 +918,10 @@ void master_sigint_handler(int signum) {
   }
   logs('I', "Master: Received SIGINT. Signalling workers to shut down...",
        NULL);
-  printf("Master: Received SIGINT. Signalling workers to shut down...\n");
   for (int i = 0; i < global_config->worker_processes; i++) {
     if (worker_pids[i] > 0) {
-      printf("Master Process %d: Sending SIGINT to Worker %d...\n", getpid(),
-             worker_pids[i]);
+      logs('I', "Master Process %d: Sending SIGINT to Worker %d...\n", NULL,
+           getpid(), worker_pids[i]);
       kill(worker_pids[i], SIGINT);
     }
   }
@@ -1107,8 +1111,7 @@ void fork_workers(int *listen_sockets, int num_workers) {
       // child reverts to default SIGINT handler before run_worker() sets its
       // own
       signal(SIGINT, SIG_DFL);
-			printf("Worker process %d started.\n", getpid());
-			logs('I', "Worker process %d started.", NULL, getpid());
+      logs('I', "Worker process %d started.", NULL, getpid());
       run_worker(listen_sockets, global_config->http->num_servers);
       exit(0);
     }
@@ -1119,15 +1122,11 @@ void fork_workers(int *listen_sockets, int num_workers) {
 // cleans up the master process
 void master_cleanup(int *listen_sockets, int num_workers) {
   int status;
-  printf("Master Process %d: Waiting for all workers to terminate...\n",
-         getpid());
   logs('I', "Master Process %d: Waiting for all workers to terminate...\n",
        NULL, getpid());
 
   for (int i = 0; i < num_workers; i++) {
     waitpid(worker_pids[i], &status, 0);
-    printf("Master Process %d: Worker with PID %d terminated.\n", getpid(),
-           worker_pids[i]);
     logs('I', "Worker process (pid %d) terminated.", NULL, worker_pids[i]);
   }
   free(worker_pids);
