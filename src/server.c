@@ -142,7 +142,7 @@ int handle_new_connection(int connection_socket, int epoll_fd,
   }
 
   // if max connections reached, reject connection
-  if (atomic_load(total_connections) >= global_config->max_connections) {
+  if (atomic_load(total_connections) > global_config->max_connections) {
     logs('W', "Server is full. Rejecting connection.", NULL);
     close(client_sock); // immediately close socket
     return 0;
@@ -482,7 +482,7 @@ int find_file(client_t *client) {
   char *request_path_with_content_dir;
   char *final_path;
 
-  printf("Request path: %s\n", request_path);
+  // printf("Request path: %s\n", request_path);
 
   // find route for this request's URI
   bool found_route = false;
@@ -497,49 +497,49 @@ int find_file(client_t *client) {
     }
 
     if (!found_route) {
-      printf("No matching route found for %s on server %s port %d\n",
-             client->request->request_line.uri, server->server_names[0],
-             server->listen_port);
+      // printf("No matching route found for %s on server %s port %d\n",
+      //       client->request->request_line.uri, server->server_names[0],
+      //       server->listen_port);
       matched_route = NULL;
     } else {
-      printf("Found matching route for %s on server %s port %d\n",
-             client->request->request_line.uri, server->server_names[0],
-             server->listen_port);
+      // printf("Found matching route for %s on server %s port %d\n",
+      //       client->request->request_line.uri, server->server_names[0],
+      //       server->listen_port);
     }
   }
 
   // get index files for this route
   if (matched_route == NULL) {
-    printf("Using server default index files.\n");
+    // printf("Using server default index files.\n");
     index_files = server->index_files;
   } else if (matched_route) {
     if (matched_route->num_index_files != 0) {
-      printf("Found index files configured for route %s. Using "
-             "route index files.\n",
-             client->request->request_line.uri);
+      // printf("Found index files configured for route %s. Using "
+      //       "route index files.\n",
+      //       client->request->request_line.uri);
       index_files = server->index_files;
     } else {
-      printf("No index files configured for route %s. Using server default "
-             "index files.\n",
-             client->request->request_line.uri);
+      // printf("No index files configured for route %s. Using server default "
+      //       "index files.\n",
+      //       client->request->request_line.uri);
       index_files = server->index_files;
     }
   }
 
   // get content directory for this route
   if (matched_route == NULL) {
-    printf("Using server default content dir.\n");
+    // printf("Using server default content dir.\n");
     content_dir = server->content_dir;
   } else if (matched_route) {
     if (matched_route->content_dir != NULL) {
-      printf("Found content dir configured for route %s. Using "
-             "route content dir.\n",
-             client->request->request_line.uri);
+      // printf("Found content dir configured for route %s. Using "
+      //       "route content dir.\n",
+      //       client->request->request_line.uri);
       content_dir = matched_route->content_dir;
     } else {
-      printf("No content dir configured for route %s. Using server "
-             "default content dir.\n",
-             client->request->request_line.uri);
+      // printf("No content dir configured for route %s. Using server "
+      //       "default content dir.\n",
+      //       client->request->request_line.uri);
       content_dir = server->content_dir;
     }
   }
@@ -547,7 +547,7 @@ int find_file(client_t *client) {
   // try first with the request path
   asprintf(&request_path_with_content_dir, "%s%s", content_dir, request_path);
   final_path = realpath(request_path_with_content_dir, NULL);
-  printf("Trying: %s\n", request_path_with_content_dir);
+  // printf("Trying: %s\n", request_path_with_content_dir);
 
   // check if final_path is still not found or is a directory
   // the directory check is needed because realpath will return a path to a
@@ -559,7 +559,7 @@ int find_file(client_t *client) {
       for (int i = 0; i < server->num_index_files; i++) {
         asprintf(&final_path, "%s%s", request_path_with_content_dir,
                  server->index_files[i]);
-        printf("Trying: %s\n", final_path);
+        // printf("Trying: %s\n", final_path);
         if (realpath(final_path, NULL) != NULL) {
           final_path = realpath(final_path, NULL);
           break;
@@ -573,7 +573,7 @@ int find_file(client_t *client) {
       for (int i = 0; i < 3; i++) {
         asprintf(&final_path, "%s%s", request_path_with_content_dir,
                  fallback_extensions[i]);
-        printf("Trying: %s\n", final_path);
+        // printf("Trying: %s\n", final_path);
         if (realpath(final_path, NULL) != NULL) {
           final_path = realpath(final_path, NULL);
           break;
@@ -584,7 +584,7 @@ int find_file(client_t *client) {
     }
   }
 
-  printf("Final path: %s\n", final_path);
+  // printf("Final path: %s\n", final_path);
 
   if (final_path != NULL) {
     client->file_fd = open(final_path, O_RDONLY);
@@ -767,10 +767,10 @@ int serve_file(client_t *client, int use_sendfile) {
   // if sendfile is enabled, use sendfile() to send the file
   // if sendfile is disabled, use writes() to send the file
   if (use_sendfile) {
-    printf("Using sendfile.\n");
+    // printf("Using sendfile.\n");
     status = send_file_with_sendfile(client);
   } else {
-    printf("Using writes.\n");
+    // printf("Using writes.\n");
     status = send_file_with_writes(client);
   }
 
@@ -878,7 +878,7 @@ int write_client_response(client_t *client) {
     // send file with preferred method (sendfile or write)
     int use_sendfile = global_config->http->sendfile;
     status = serve_file(client, use_sendfile);
-    printf("Serve file status: %d\n", status);
+    // printf("Serve file status: %d\n", status);
 
     return status;
   } else {
@@ -1014,12 +1014,14 @@ void run_worker(int *listen_sockets, int num_sockets) {
         client_t *client = (client_t *)events[i].data.ptr;
 
         if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
+					printf("EPOLLRDHUP/EPOLLHUP/EPOLLERR event received for client fd %d\n", client->fd);
           transition_state(client, epoll_fd, CLOSING);
           close_connection(client, epoll_fd, &active_connections);
           continue;
         }
 
         if (events[i].events & EPOLLIN) {
+					printf("EPOLLIN event received for client fd %d\n", client->fd);
           int read_status = read_client_request(client);
 
           if (read_status == 0) {
@@ -1040,6 +1042,7 @@ void run_worker(int *listen_sockets, int num_sockets) {
         }
 
         if (events[i].events & EPOLLOUT) {
+					printf("EPOLLOUT event received for client fd %d\n", client->fd);
           int write_status = write_client_response(client);
 
           if (write_status == 0) {
