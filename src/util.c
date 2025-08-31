@@ -14,8 +14,75 @@
 
 #include "util.h"
 
-int logs_enabled = 1;
-int verbose_mode_enabled = 1;
+int logs_enabled = 0;
+int verbose_mode_enabled = 0;
+
+/*
+void logs(char type, const char *fmt, const char *extra_fmt, ...) {
+  if (!logs_enabled) {
+    return;
+  }
+
+  // Determine the log file based on the process ID
+  char log_filename[256];
+  snprintf(log_filename, sizeof(log_filename), "worker_%d.log", getpid());
+
+  // Open the file in append mode. This is crucial for keeping a continuous log.
+  FILE *log_file = fopen(log_filename, "a");
+  if (!log_file) {
+    // Fallback to stderr if file cannot be opened
+    log_file = stderr;
+  }
+
+  va_list args;
+  va_start(args, extra_fmt);
+
+  va_list args_copy;
+  va_copy(args_copy, args);
+
+  // Print prefix to the selected file stream
+  switch (type) {
+  case 'E':
+    fprintf(log_file, "[ERROR] ");
+    break;
+  case 'W':
+    fprintf(log_file, "[WARN] ");
+    break;
+  case 'I':
+    fprintf(log_file, "[INFO] ");
+    break;
+  case 'D':
+    fprintf(log_file, "[DEBUG] ");
+    break;
+  default:
+    fprintf(log_file, "[ERROR] Invalid log type: %c\n", type);
+    va_end(args);
+    va_end(args_copy);
+    if (log_file != stderr)
+      fclose(log_file); // Close file if opened
+    return;
+  }
+
+  // Print main message
+  vfprintf(log_file, fmt, args);
+  fprintf(log_file, "\n");
+
+  // Print extra if in verbose mode
+  if (extra_fmt && verbose_mode_enabled) {
+    fprintf(log_file, "EXTRA: ");
+    vfprintf(log_file, extra_fmt, args_copy);
+    fprintf(log_file, "\n");
+  }
+
+  va_end(args);
+  va_end(args_copy);
+
+  // Close the file stream. This flushes the buffer and ensures data is written.
+  if (log_file != stderr) {
+    fclose(log_file);
+  }
+}
+*/
 
 void logs(char type, const char *fmt, const char *extra_fmt, ...) {
   if (!logs_enabled) {
@@ -85,9 +152,9 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
 
 /*
 void logs(char type, const char *fmt, const char *extra_fmt, ...) {
-	if (!logs_enabled) {
-		return;
-	}
+        if (!logs_enabled) {
+                return;
+        }
 
   va_list args;
   va_start(args, extra_fmt);
