@@ -483,6 +483,7 @@ int send_file_with_write(client_t *client) {
           return -1;
         } else {
           perror("write");
+					return -1;
 				}
       } else if (bytes_written > 0) {
         bytes_left_to_write -= bytes_written;
@@ -511,7 +512,6 @@ int send_file_with_sendfile(client_t *client) {
         return -1;
       } else {
         perror("sendfile");
-        close_connection(client);
         return -1;
       }
     }
@@ -663,11 +663,11 @@ void worker_loop(int *listen_sockets) {
 
           set_nonblocking(new_conn_fd);
 
-          int flag = 1;
-          if (setsockopt(new_conn_fd, IPPROTO_TCP, TCP_NODELAY, &flag,
-                         sizeof(flag)) == -1) {
-            perror("setsockopt TCP_NODELAY");
-          }
+					int flag = 1;
+					if (setsockopt(new_conn_fd, IPPROTO_TCP, TCP_NODELAY, &flag,
+							 sizeof(flag)) == -1) {
+						perror("setsockopt TCP_NODELAY");
+					}
 
           my_connections++;
           atomic_fetch_add(total_connections, 1);
