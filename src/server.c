@@ -476,12 +476,14 @@ int send_file_with_write(client_t *client) {
     while (bytes_left_to_write > 0) {
       ssize_t bytes_written = write(client->fd, write_ptr, bytes_left_to_write);
 
-      if (bytes_written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        return 1;
-      } else if (bytes_written == -1) {
-        perror("write");
-        close_connection(client);
-        return -1;
+      if (bytes_written == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+          return 1;
+        } else if (errno == EPIPE) {
+          return -1;
+        } else {
+          perror("write");
+				}
       } else if (bytes_written > 0) {
         bytes_left_to_write -= bytes_written;
         write_ptr += bytes_written;
@@ -507,7 +509,7 @@ int send_file_with_sendfile(client_t *client) {
         return 1;
       } else if (errno == EPIPE) {
         return -1;
-			} else {
+      } else {
         perror("sendfile");
         close_connection(client);
         return -1;
