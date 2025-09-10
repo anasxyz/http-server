@@ -515,3 +515,4 @@ void free_config() {
   free(global_config);
   global_config = NULL; // Prevent double-free
 }
+

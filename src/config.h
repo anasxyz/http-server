@@ -91,3 +91,4 @@ void free_config();
 char *trim(char *str);
 
 #endif // _CONFIG_H_
+
