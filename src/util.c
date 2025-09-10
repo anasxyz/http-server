@@ -1,7 +1,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
-#include <glib.h>
 #include <netinet/in.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "util.h"
@@ -223,15 +224,11 @@ int setup_listening_socket(int port) {
 
   listen_sock = socket(AF_INET, SOCK_STREAM, 0);
   if (listen_sock == -1) {
-    logs('E', "Failed to create a listening socket.",
-         "setup_listening_socket(): socket creation failed.");
     return -1;
   }
 
   if (setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) ==
       -1) {
-    logs('E', "Failed to configure socket options.",
-         "setup_listening_socket(): setsockopt() with SO_REUSEADDR failed.");
     close(listen_sock);
     return -1;
   }
@@ -243,25 +240,20 @@ int setup_listening_socket(int port) {
 
   if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) ==
       -1) {
-    logs('E', "Failed to bind the socket to port %d.",
-         "setup_listening_socket(): bind() failed, port may be in use.", port);
     close(listen_sock);
     return -1;
   }
 
   if (listen(listen_sock, 10) == -1) {
-    logs('E', "Failed to prepare the socket for incoming connections.",
-         "setup_listening_socket(): listen() failed.");
     close(listen_sock);
     return -1;
   }
 
   if (set_nonblocking(listen_sock) == -1) {
-    logs('E', "Failed to configure socket to non-blocking.",
-         "setup_listening_socket(): set_nonblocking() failed.");
     close(listen_sock);
     return -1;
   }
 
   return listen_sock;
 }
+
