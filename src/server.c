@@ -18,13 +18,14 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/timerfd.h>
 
 #include "config.h"
 #include "hashmap.h"
 #include "mime.h"
 #include "util.h"
 
-#define MAX_EVENTS 1024
+#define MAX_EVENTS (2 * 1024)
 
 #define BUFFER_SIZE (64 * 1024)
 #define HEADER_BUFFER_SIZE (2 * 1024)
@@ -41,6 +42,10 @@ volatile sig_atomic_t worker_running = 1;
 void handle_signal(int sig) { g_running = 0; }
 
 void worker_signal_handler(int sig) { worker_running = 0; }
+
+typedef struct client client_t;
+
+void close_connection(client_t *client);
 
 void cleanup_shm() {
   const char *shm_name = "/server_connections";
@@ -68,6 +73,8 @@ void setup_total_connections() {
   atomic_store(total_connections, 0);
   atexit(cleanup_shm);
 }
+
+typedef struct timer_node timer_node_t;
 
 typedef struct request {
   char method[10];
@@ -115,7 +122,81 @@ typedef struct client {
   server_config *parent_server;
 
   int keep_alive;
+
+  timer_node_t *timer_node;
 } client_t;
+
+struct timer_node {
+  client_t *client;
+  timer_node_t *prev;
+  timer_node_t *next;
+};
+
+#define WHEEL_SIZE 60
+#define TICK_INTERVAL_SECONDS 1
+static timer_node_t *timer_wheel[WHEEL_SIZE];
+static int current_tick = 0;
+void timer_init() {
+  for (int i = 0; i < WHEEL_SIZE; ++i) {
+    timer_wheel[i] = NULL;
+  }
+}
+void add_timer(client_t *client, int timeout_seconds) {
+  if (timeout_seconds <= 0) {
+    timeout_seconds = 1;
+  }
+  int ticks_to_add = timeout_seconds / TICK_INTERVAL_SECONDS;
+  int slot = (current_tick + ticks_to_add) % WHEEL_SIZE;
+  timer_node_t *node = malloc(sizeof(timer_node_t));
+  if (!node) {
+    perror("Failed to allocate timer node");
+    return;
+  }
+  node->client = client;
+  node->prev = NULL;
+  node->next = timer_wheel[slot];
+  if (timer_wheel[slot] != NULL) {
+    timer_wheel[slot]->prev = node;
+  }
+  timer_wheel[slot] = node;
+  client->timer_node = node;
+}
+void remove_timer(client_t *client) {
+  timer_node_t *node = client->timer_node;
+  if (!node)
+    return;
+  if (node->prev) {
+    node->prev->next = node->next;
+  } else {
+    // This is the head of the list for its slot
+    for (int i = 0; i < WHEEL_SIZE; ++i) {
+      if (timer_wheel[i] == node) {
+        timer_wheel[i] = node->next;
+        break;
+      }
+    }
+  }
+  if (node->next) {
+    node->next->prev = node->prev;
+  }
+  free(node);
+  client->timer_node = NULL;
+}
+void tick_timer_wheel() {
+  current_tick = (current_tick + 1) % WHEEL_SIZE;
+  timer_node_t *current = timer_wheel[current_tick];
+  timer_wheel[current_tick] = NULL;
+  while (current != NULL) {
+    timer_node_t *next = current->next;
+    client_t *client = current->client;
+    // Timeout logic:
+    printf("Connection %d timed out\n", client->fd);
+    remove_timer(client); // This is needed to free the node, even if
+                          // close_connection also cleans up
+    close_connection(client);
+    current = next;
+  }
+}
 
 client_t *initialise_client() {
   client_t *client = malloc(sizeof(client_t));
@@ -161,6 +242,8 @@ client_t *initialise_client() {
 
   client->parent_server = NULL;
 
+  client->timer_node = NULL;
+
   return client;
 }
 
@@ -199,6 +282,9 @@ void free_client(client_t *client) {
   if (client) {
     if (client->file_fd != -1) {
       close(client->file_fd);
+    }
+    if (client->timer_node) {
+      remove_timer(client);
     }
     free_request(client->request);
     free(client);
@@ -617,6 +703,30 @@ void worker_loop(int *listen_sockets) {
   struct epoll_event event, events[MAX_EVENTS];
   int epoll_fd = setup_epoll(listen_sockets);
 
+  // Add timerfd for wheel ticking
+  int timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+  if (timer_fd == -1) {
+    perror("timerfd_create");
+    exit(EXIT_FAILURE);
+  }
+  struct itimerspec new_value;
+  new_value.it_value.tv_sec = TICK_INTERVAL_SECONDS;
+  new_value.it_value.tv_nsec = 0;
+  new_value.it_interval.tv_sec = TICK_INTERVAL_SECONDS;
+  new_value.it_interval.tv_nsec = 0;
+  if (timerfd_settime(timer_fd, 0, &new_value, NULL) == -1) {
+    perror("timerfd_settime");
+    close(timer_fd);
+    exit(EXIT_FAILURE);
+  }
+  event.events = EPOLLIN;
+  event.data.fd = timer_fd;
+  if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, timer_fd, &event) == -1) {
+    perror("epoll_ctl: timerfd");
+    close(timer_fd);
+    exit(EXIT_FAILURE);
+  }
+
   printf("Worker %d is running and waiting for connections...\n", getpid());
 
   while (worker_running) {
@@ -632,6 +742,15 @@ void worker_loop(int *listen_sockets) {
 
     for (int i = 0; i < num_events; ++i) {
       int current_fd = events[i].data.fd;
+
+      if (current_fd == timer_fd) {
+        uint64_t ticks;
+        if (read(timer_fd, &ticks, sizeof(ticks)) == sizeof(ticks)) {
+          tick_timer_wheel();
+        }
+        continue;
+      }
+
       int is_listening_socket = 0;
       for (int j = 0; j < global_config->http->num_servers; j++) {
         if (current_fd == listen_sockets[j]) {
@@ -697,6 +816,7 @@ void worker_loop(int *listen_sockets) {
             close_connection(client);
             printf("closing connection1\n");
           }
+          add_timer(client, (client->parent_server->timeout / 1000));
         }
 
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -710,6 +830,7 @@ void worker_loop(int *listen_sockets) {
         }
 
         if (events[i].events & EPOLLIN) {
+          remove_timer(client);
           if (client->request_complete) {
             continue;
           }
@@ -805,6 +926,7 @@ void worker_loop(int *listen_sockets) {
           if (client->send_state == SEND_STATE_DONE) {
             if (client->keep_alive == 1) {
               reset_client(client);
+              add_timer(client, (client->parent_server->timeout / 1000));
 
               event.events = EPOLLIN | EPOLLET;
               event.data.ptr = client;
@@ -825,6 +947,7 @@ void worker_loop(int *listen_sockets) {
 
   printf("Worker %d is exiting.\n", getpid());
   close(epoll_fd);
+  close(timer_fd);
   free_mime_types();
   free_config();
   exit(EXIT_SUCCESS);
@@ -908,7 +1031,7 @@ int main() {
   int listen_sockets[global_config->http->num_servers];
   init_sockets(listen_sockets);
 
-	start(listen_sockets);
+  start(listen_sockets);
 
   return 0;
 }
