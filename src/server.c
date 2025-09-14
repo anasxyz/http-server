@@ -293,9 +293,6 @@ void free_client(client_t *client) {
     if (client->header_data)
       free(client->header_data);
 
-    if (client->request->body_data)
-      free(client->request->body_data);
-
     if (client->file_fd != -1)
       close(client->file_fd);
     if (client->file_data)
