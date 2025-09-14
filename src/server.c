@@ -136,11 +136,13 @@ struct timer_node {
 #define TICK_INTERVAL_SECONDS 1
 static timer_node_t *timer_wheel[WHEEL_SIZE];
 static int current_tick = 0;
+
 void timer_init() {
   for (int i = 0; i < WHEEL_SIZE; ++i) {
     timer_wheel[i] = NULL;
   }
 }
+
 void add_timer(client_t *client, int timeout_seconds) {
   if (timeout_seconds <= 0) {
     timeout_seconds = 1;
@@ -161,6 +163,7 @@ void add_timer(client_t *client, int timeout_seconds) {
   timer_wheel[slot] = node;
   client->timer_node = node;
 }
+
 void remove_timer(client_t *client) {
   timer_node_t *node = client->timer_node;
   if (!node)
@@ -168,7 +171,6 @@ void remove_timer(client_t *client) {
   if (node->prev) {
     node->prev->next = node->next;
   } else {
-    // This is the head of the list for its slot
     for (int i = 0; i < WHEEL_SIZE; ++i) {
       if (timer_wheel[i] == node) {
         timer_wheel[i] = node->next;
@@ -182,6 +184,7 @@ void remove_timer(client_t *client) {
   free(node);
   client->timer_node = NULL;
 }
+
 void tick_timer_wheel() {
   current_tick = (current_tick + 1) % WHEEL_SIZE;
   timer_node_t *current = timer_wheel[current_tick];
@@ -189,10 +192,8 @@ void tick_timer_wheel() {
   while (current != NULL) {
     timer_node_t *next = current->next;
     client_t *client = current->client;
-    // Timeout logic:
-    printf("Connection %d timed out\n", client->fd);
-    remove_timer(client); // This is needed to free the node, even if
-                          // close_connection also cleans up
+
+    remove_timer(client);
     close_connection(client);
     current = next;
   }
@@ -703,7 +704,6 @@ void worker_loop(int *listen_sockets) {
   struct epoll_event event, events[MAX_EVENTS];
   int epoll_fd = setup_epoll(listen_sockets);
 
-  // Add timerfd for wheel ticking
   int timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
   if (timer_fd == -1) {
     perror("timerfd_create");
