@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -14,11 +16,11 @@
 #include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/timerfd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
-#include <sys/timerfd.h>
 
 #include "config.h"
 #include "hashmap.h"
@@ -143,11 +145,11 @@ void timer_init() {
   }
 }
 
-void add_timer(client_t *client, int timeout_seconds) {
-  if (timeout_seconds <= 0) {
-    timeout_seconds = 1;
+void add_timer(client_t *client, int timeout_ms) {
+  if (timeout_ms <= 0) {
+    timeout_ms = 1;
   }
-  int ticks_to_add = timeout_seconds / TICK_INTERVAL_SECONDS;
+  int ticks_to_add = (timeout_ms / 1000) / TICK_INTERVAL_SECONDS;
   int slot = (current_tick + ticks_to_add) % WHEEL_SIZE;
   timer_node_t *node = malloc(sizeof(timer_node_t));
   if (!node) {
@@ -761,9 +763,9 @@ void worker_loop(int *listen_sockets) {
 
       if (is_listening_socket) {
         client_addr_len = sizeof(client_addr);
-        while (
-            (new_conn_fd = accept(current_fd, (struct sockaddr *)&client_addr,
-                                  &client_addr_len)) != -1) {
+        while ((new_conn_fd = accept4(
+                    current_fd, (struct sockaddr *)&client_addr,
+                    &client_addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC)) != -1) {
           if (atomic_load(total_connections) >=
               global_config->max_connections) {
             printf("Max connections reached\n");
@@ -816,7 +818,7 @@ void worker_loop(int *listen_sockets) {
             close_connection(client);
             printf("closing connection1\n");
           }
-          add_timer(client, (client->parent_server->timeout / 1000));
+          add_timer(client, client->parent_server->timeout);
         }
 
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -926,7 +928,7 @@ void worker_loop(int *listen_sockets) {
           if (client->send_state == SEND_STATE_DONE) {
             if (client->keep_alive == 1) {
               reset_client(client);
-              add_timer(client, (client->parent_server->timeout / 1000));
+              add_timer(client, client->parent_server->timeout);
 
               event.events = EPOLLIN | EPOLLET;
               event.data.ptr = client;
