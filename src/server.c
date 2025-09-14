@@ -85,7 +85,7 @@ typedef struct request {
 
   HashMap *headers;
 
-  char body_data[BUFFER_SIZE];
+  char *body_data;
   size_t body_len;
 } request_t;
 
@@ -238,6 +238,8 @@ client_t *initialise_client() {
   }
   memset(client->request, 0, sizeof(request_t));
 
+	client->request->body_data = (char*)malloc(global_config->http->body_buffer_size);
+
   client->request->headers = create_hashmap();
   if (!client->request->headers) {
     free(client->request);
@@ -280,6 +282,9 @@ void free_request(request_t *req) {
     if (req->headers) {
       free_hashmap(req->headers);
     }
+		if (req->body_data) {
+			free(req->body_data);
+		}
     free(req);
   }
 }
@@ -672,6 +677,7 @@ void reset_client(client_t *client) {
 
 	memset(client->header_data, 0, global_config->http->header_buffer_size);
 	memset(client->file_data, 0, global_config->http->body_buffer_size);
+	memset(client->request->body_data, 0, global_config->http->body_buffer_size);
 	memset(client->request_buffer, 0, global_config->http->body_buffer_size);
   memset(client->request->method, 0, sizeof(client->request->method));
   memset(client->request->uri, 0, sizeof(client->request->uri));
