@@ -202,27 +202,31 @@ client_t *initialise_client() {
   if (!client) {
     return NULL;
   }
-
   memset(client, 0, sizeof(client_t));
+
   client->fd = -1;
   client->epoll_fd = -1;
 
   client->send_state = SEND_STATE_HEADER;
 
-	client->header_data = (char*)malloc(global_config->http->headers_buffer_size);
+  client->header_data =
+      (char *)malloc(global_config->http->headers_buffer_size);
   client->header_len = 0;
   client->header_sent = 0;
 
-  client->body_data = NULL;
-  client->body_len = 0;
-  client->body_sent = 0;
+  /*
+client->body_data = (char*)malloc(global_config->http->body_buffer_size);
+client->body_len = 0;
+client->body_sent = 0;
+  */
 
-	client->file_data = (char*)malloc(global_config->http->body_buffer_size);
   client->file_fd = -1;
+  client->file_data = (char *)malloc(global_config->http->body_buffer_size);
   client->file_size = 0;
   client->file_sent = 0;
 
-	client->request_buffer = (char*)malloc(global_config->http->default_buffer_size);
+  client->request_buffer =
+      (char *)malloc(global_config->http->default_buffer_size);
   client->request_len = 0;
   client->request_complete = 0;
 
@@ -233,9 +237,8 @@ client_t *initialise_client() {
     return NULL;
   }
   memset(client->request, 0, sizeof(request_t));
-
-	client->request->body_data = (char*)malloc(global_config->http->default_buffer_size);
-
+  client->request->body_data =
+      (char *)malloc(global_config->http->default_buffer_size);
   client->request->headers = create_hashmap();
   if (!client->request->headers) {
     free(client->request);
@@ -273,36 +276,39 @@ void write_pid_to_file(int value) {
   fclose(file);
 }
 
-void free_request(request_t *req) {
-  if (req) {
-    if (req->headers) {
-      free_hashmap(req->headers);
-    }
-		if (req->body_data) {
-			free(req->body_data);
-		}
-    free(req);
+void free_request(request_t *request) {
+  if (request) {
+    if (request->headers)
+      free_hashmap(request->headers);
+
+    if (request->body_data)
+      free(request->body_data);
+
+    free(request);
   }
 }
 
 void free_client(client_t *client) {
   if (client) {
-    if (client->file_fd != -1) {
+    if (client->header_data)
+      free(client->header_data);
+
+    if (client->request->body_data)
+      free(client->request->body_data);
+
+    if (client->file_fd != -1)
       close(client->file_fd);
-    }
-    if (client->timer_node) {
+    if (client->file_data)
+      free(client->file_data);
+
+    if (client->request_buffer)
+      free(client->request_buffer);
+
+    if (client->timer_node)
       remove_timer(client);
-    }
-		if (client->file_data) {
-			free(client->file_data);
-		}
-		if (client->request_buffer) {
-			free(client->request_buffer);
-		}
-		if (client->header_data) {
-			free(client->header_data);
-		}
+
     free_request(client->request);
+
     free(client);
   }
 }
@@ -467,9 +473,10 @@ int is_directory(const char *path) {
   return (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
 }
 
-int find_file(client_t *client, char* uri) {
-	char* search_uri = client->request->uri;
-	if (uri) search_uri = uri;
+int find_file(client_t *client, char *uri) {
+  char *search_uri = client->request->uri;
+  if (uri)
+    search_uri = uri;
 
   server_config *server = client->parent_server;
   route_config *matched_route = NULL;
@@ -659,36 +666,43 @@ int build_headers(client_t *client, int status_code, long long content_length,
 }
 
 void reset_client(client_t *client) {
-  if (client->file_fd != -1) {
-    close(client->file_fd);
-    client->file_fd = -1;
-  }
-
+  // reset request data
+  memset(client->request->method, 0, sizeof(client->request->method));
+  memset(client->request->uri, 0, sizeof(client->request->uri));
+  memset(client->request->http_version, 0,
+         sizeof(client->request->http_version));
   free_hashmap(client->request->headers);
   client->request->headers = create_hashmap();
   if (!client->request->headers) {
     close_connection(client);
     return;
   }
-
-	memset(client->header_data, 0, global_config->http->headers_buffer_size);
-	memset(client->file_data, 0, global_config->http->body_buffer_size);
-	memset(client->request->body_data, 0, global_config->http->default_buffer_size);
-	memset(client->request_buffer, 0, global_config->http->default_buffer_size);
-  memset(client->request->method, 0, sizeof(client->request->method));
-  memset(client->request->uri, 0, sizeof(client->request->uri));
-  memset(client->request->http_version, 0,
-         sizeof(client->request->http_version));
+  memset(client->request->body_data, 0,
+         global_config->http->default_buffer_size);
   client->request->body_len = 0;
 
+  // reset client data
   client->send_state = SEND_STATE_HEADER;
+
+  memset(client->header_data, 0, global_config->http->headers_buffer_size);
   client->header_len = 0;
   client->header_sent = 0;
-  client->body_data = NULL;
-  client->body_len = 0;
-  client->body_sent = 0;
+
+  /*
+  memset(client->body_data, 0, global_config->http->body_buffer_size);
+client->body_len = 0;
+client->body_sent = 0;
+  */
+
+  if (client->file_fd != -1)
+    close(client->file_fd);
+  client->file_fd = -1;
+  memset(client->file_data, 0, global_config->http->body_buffer_size);
   client->file_size = 0;
   client->file_sent = 0;
+  memset(client->file_path, 0, sizeof(client->file_path));
+
+  memset(client->request_buffer, 0, global_config->http->default_buffer_size);
   client->request_len = 0;
   client->request_complete = 0;
 }
@@ -864,14 +878,16 @@ void worker_loop(int *listen_sockets) {
           ssize_t bytes_read;
           while ((bytes_read = read(
                       client->fd, client->request_buffer + client->request_len,
-                      global_config->http->default_buffer_size - 1 - client->request_len)) > 0) {
+                      global_config->http->default_buffer_size - 1 -
+                          client->request_len)) > 0) {
             client->request_len += bytes_read;
             client->request_buffer[client->request_len] = '\0';
             if (strstr(client->request_buffer, "\r\n\r\n") != NULL) {
               client->request_complete = 1;
               break;
             }
-            if (client->request_len >= global_config->http->default_buffer_size - 1) {
+            if (client->request_len >=
+                global_config->http->default_buffer_size - 1) {
               close_connection(client);
               break;
             }
@@ -902,8 +918,8 @@ void worker_loop(int *listen_sockets) {
               int find_file_status = find_file(client, NULL);
               if (find_file_status == -1) {
                 status_code = 404;
-								// TODO: add error file path in config
-								find_file_status = find_file(client, "/404.html");
+                // TODO: add error file path in config
+                find_file_status = find_file(client, "/404.html");
                 if (find_file_status == -1) {
                   close_connection(client);
                   continue;
