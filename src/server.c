@@ -115,7 +115,7 @@ typedef struct client {
   size_t file_sent;
   char file_path[256];
 
-  char request_buffer[REQUEST_BUFFER_SIZE];
+  char *request_buffer;
   size_t request_len;
   int request_complete;
 
@@ -225,6 +225,7 @@ client_t *initialise_client() {
   client->file_size = 0;
   client->file_sent = 0;
 
+	client->request_buffer = (char*)malloc(global_config->http->body_buffer_size);
   client->request_len = 0;
   client->request_complete = 0;
 
@@ -292,6 +293,9 @@ void free_client(client_t *client) {
     }
 		if (client->file_data) {
 			free(client->file_data);
+		}
+		if (client->request_buffer) {
+			free(client->request_buffer);
 		}
     free_request(client->request);
     free(client);
@@ -663,6 +667,7 @@ void reset_client(client_t *client) {
   }
 
 	memset(client->file_data, 0, global_config->http->body_buffer_size);
+	memset(client->request_buffer, 0, global_config->http->body_buffer_size);
   memset(client->request->method, 0, sizeof(client->request->method));
   memset(client->request->uri, 0, sizeof(client->request->uri));
   memset(client->request->http_version, 0,
