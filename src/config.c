@@ -207,10 +207,12 @@ void parse_config() {
         continue;
       }
     } else if (state == HTTP) {
-			if (strcmp(key, "body_buffer_size") == 0) {
+			if (strcmp(key, "default_buffer_size") == 0) {
+				global_config->http->default_buffer_size = parse_buffer_size(value);
+			} else if (strcmp(key, "body_buffer_size") == 0) {
 				global_config->http->body_buffer_size = parse_buffer_size(value);
-			} else if (strcmp(key, "header_buffer_size") == 0) {
-				global_config->http->header_buffer_size = parse_buffer_size(value);
+			} else if (strcmp(key, "headers_buffer_size") == 0) {
+				global_config->http->headers_buffer_size = parse_buffer_size(value);
 			} else if (strcmp(key, "mime") == 0) {
         global_config->http->mime_types_path = strdup(value);
       } else if (strcmp(key, "default_type") == 0) {

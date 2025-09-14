@@ -29,10 +29,6 @@
 
 #define MAX_EVENTS (2 * 1024)
 
-#define BUFFER_SIZE (64 * 1024)
-#define HEADER_BUFFER_SIZE (2 * 1024)
-#define REQUEST_BUFFER_SIZE (2 * 1024)
-
 atomic_int *total_connections;
 
 long long request_count = 0;
@@ -213,7 +209,7 @@ client_t *initialise_client() {
 
   client->send_state = SEND_STATE_HEADER;
 
-	client->header_data = (char*)malloc(global_config->http->header_buffer_size);
+	client->header_data = (char*)malloc(global_config->http->headers_buffer_size);
   client->header_len = 0;
   client->header_sent = 0;
 
@@ -226,7 +222,7 @@ client_t *initialise_client() {
   client->file_size = 0;
   client->file_sent = 0;
 
-	client->request_buffer = (char*)malloc(global_config->http->body_buffer_size);
+	client->request_buffer = (char*)malloc(global_config->http->default_buffer_size);
   client->request_len = 0;
   client->request_complete = 0;
 
@@ -238,7 +234,7 @@ client_t *initialise_client() {
   }
   memset(client->request, 0, sizeof(request_t));
 
-	client->request->body_data = (char*)malloc(global_config->http->body_buffer_size);
+	client->request->body_data = (char*)malloc(global_config->http->default_buffer_size);
 
   client->request->headers = create_hashmap();
   if (!client->request->headers) {
@@ -407,7 +403,7 @@ int parse_request(client_t *client) {
     body_start += 4;
     size_t body_len =
         client->request_len - (body_start - client->request_buffer);
-    if (body_len > 0 && body_len < BUFFER_SIZE) {
+    if (body_len > 0 && body_len < global_config->http->default_buffer_size) {
       memcpy(client->request->body_data, body_start, body_len);
       client->request->body_data[body_len] = '\0';
       client->request->body_len = body_len;
@@ -565,8 +561,8 @@ int find_file(client_t *client, char* uri) {
 int send_file_with_write(client_t *client) {
   while (client->file_sent < client->file_size) {
     size_t bytes_to_read = client->file_size - client->file_sent;
-    if (bytes_to_read > BUFFER_SIZE) {
-      bytes_to_read = BUFFER_SIZE;
+    if (bytes_to_read > global_config->http->body_buffer_size) {
+      bytes_to_read = global_config->http->body_buffer_size;
     }
     ssize_t bytes_read = pread(client->file_fd, client->file_data,
                                bytes_to_read, client->file_sent);
@@ -675,10 +671,10 @@ void reset_client(client_t *client) {
     return;
   }
 
-	memset(client->header_data, 0, global_config->http->header_buffer_size);
+	memset(client->header_data, 0, global_config->http->headers_buffer_size);
 	memset(client->file_data, 0, global_config->http->body_buffer_size);
-	memset(client->request->body_data, 0, global_config->http->body_buffer_size);
-	memset(client->request_buffer, 0, global_config->http->body_buffer_size);
+	memset(client->request->body_data, 0, global_config->http->default_buffer_size);
+	memset(client->request_buffer, 0, global_config->http->default_buffer_size);
   memset(client->request->method, 0, sizeof(client->request->method));
   memset(client->request->uri, 0, sizeof(client->request->uri));
   memset(client->request->http_version, 0,
@@ -868,14 +864,14 @@ void worker_loop(int *listen_sockets) {
           ssize_t bytes_read;
           while ((bytes_read = read(
                       client->fd, client->request_buffer + client->request_len,
-                      REQUEST_BUFFER_SIZE - 1 - client->request_len)) > 0) {
+                      global_config->http->default_buffer_size - 1 - client->request_len)) > 0) {
             client->request_len += bytes_read;
             client->request_buffer[client->request_len] = '\0';
             if (strstr(client->request_buffer, "\r\n\r\n") != NULL) {
               client->request_complete = 1;
               break;
             }
-            if (client->request_len >= BUFFER_SIZE - 1) {
+            if (client->request_len >= global_config->http->default_buffer_size - 1) {
               close_connection(client);
               break;
             }
