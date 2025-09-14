@@ -454,7 +454,10 @@ int is_directory(const char *path) {
   return (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
 }
 
-int find_file(client_t *client) {
+int find_file(client_t *client, char* uri) {
+	char* search_uri = client->request->uri;
+	if (uri) search_uri = uri;
+
   server_config *server = client->parent_server;
   route_config *matched_route = NULL;
 
@@ -462,7 +465,7 @@ int find_file(client_t *client) {
   char **index_files = server->index_files;
 
   for (int i = 0; i < server->num_routes; i++) {
-    if (strcmp(server->routes[i].uri, client->request->uri) == 0) {
+    if (strcmp(server->routes[i].uri, search_uri) == 0) {
       matched_route = &server->routes[i];
       break;
     }
@@ -477,7 +480,7 @@ int find_file(client_t *client) {
   }
 
   char *full_path = NULL;
-  if (asprintf(&full_path, "%s%s", content_dir, client->request->uri) == -1) {
+  if (asprintf(&full_path, "%s%s", content_dir, search_uri) == -1) {
     return -1;
   }
 
@@ -487,9 +490,9 @@ int find_file(client_t *client) {
   if (!resolved || is_directory(resolved)) {
     free(resolved);
 
-    if (client->request->uri[strlen(client->request->uri) - 1] == '/') {
+    if (search_uri[strlen(search_uri) - 1] == '/') {
       for (int i = 0; i < server->num_index_files; i++) {
-        if (asprintf(&full_path, "%s%s%s", content_dir, client->request->uri,
+        if (asprintf(&full_path, "%s%s%s", content_dir, search_uri,
                      index_files[i]) == -1) {
           continue;
         }
@@ -501,7 +504,7 @@ int find_file(client_t *client) {
     } else {
       const char *fallbacks[] = {".html", ".htm", ".txt"};
       for (int i = 0; i < 3; i++) {
-        if (asprintf(&full_path, "%s%s%s", content_dir, client->request->uri,
+        if (asprintf(&full_path, "%s%s%s", content_dir, search_uri,
                      fallbacks[i]) == -1) {
           continue;
         }
@@ -871,18 +874,27 @@ void worker_loop(int *listen_sockets) {
             char *connection;
             char *mime_type;
 
-            if (parse_request(client) == -1) {
-              close_connection(client);
-              continue;
+            int parse_request_status = parse_request(client);
+            if (parse_request_status == -1) {
+              status_code = 400;
+            } else {
+              status_code = 200;
             }
 
-            if (find_file(client) == -1) {
-              close_connection(client);
-              continue;
+            if (parse_request_status == 0) {
+              int find_file_status = find_file(client, NULL);
+              if (find_file_status == -1) {
+                status_code = 404;
+								// TODO: add error file path in config
+								find_file_status = find_file(client, "/404.html");
+                if (find_file_status == -1) {
+                  close_connection(client);
+                  continue;
+                }
+              }
             }
 
             // set headers values
-            status_code = 200;
             content_length = client->file_size;
             connection =
                 (char *)get_hashmap(client->request->headers, "Connection");
@@ -895,9 +907,8 @@ void worker_loop(int *listen_sockets) {
             }
             mime_type = get_mime_type(client->file_path);
 
-            int build_headers_status =
-                build_headers(client, status_code, content_length,
-                              connection, mime_type);
+            int build_headers_status = build_headers(
+                client, status_code, content_length, connection, mime_type);
             if (build_headers_status == -1) {
               close_connection(client);
               continue;
