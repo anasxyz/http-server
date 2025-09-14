@@ -5,6 +5,7 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...);
 void exits();
 int set_nonblocking(int fd);
 int setup_listening_socket(int port);
+char *get_status_message(int code);
 
 #endif // _UTIL_H_
 

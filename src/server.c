@@ -619,16 +619,20 @@ int send_file_with_sendfile(client_t *client) {
   return 0;
 }
 
-int build_headers(client_t *client, long long content_length, char *connection,
-                  const char *mime_type) {
-  char header_template[] = "HTTP/1.1 200 OK\r\n"
+int build_headers(client_t *client, int status_code, long long content_length,
+                  char *connection, const char *mime_type) {
+  char header_template[] = "HTTP/1.1 %d %s\r\n"
                            "Content-Length: %lld\r\n"
                            "Connection: %s\r\n"
                            "Content-Type: %s\r\n"
                            "\r\n";
+
+  char *status_message = get_status_message(status_code);
+
   char header_buf[256];
-  int header_len = snprintf(header_buf, sizeof(header_buf), header_template,
-                            content_length, connection, mime_type);
+  int header_len =
+      snprintf(header_buf, sizeof(header_buf), header_template, status_code,
+               status_message, content_length, connection, mime_type);
 
   memcpy(client->header_data, header_buf, header_len + 1);
   client->header_len = header_len;
@@ -862,6 +866,11 @@ void worker_loop(int *listen_sockets) {
           }
 
           if (client->request_complete) {
+            int status_code;
+            long long content_length;
+            char *connection;
+            char *mime_type;
+
             if (parse_request(client) == -1) {
               close_connection(client);
               continue;
@@ -872,21 +881,23 @@ void worker_loop(int *listen_sockets) {
               continue;
             }
 
-            const char *mime_type = get_mime_type(client->file_path);
-            char *connection_header =
+            // set headers values
+            status_code = 200;
+            content_length = client->file_size;
+            connection =
                 (char *)get_hashmap(client->request->headers, "Connection");
-            client->keep_alive = 0;
-            if (connection_header != NULL &&
-                (strcmp(connection_header, "keep-alive") == 0 ||
-                 strcmp(connection_header, "Keep-Alive") == 0)) {
+            if (connection != NULL && (strcmp(connection, "keep-alive") == 0 ||
+                                       strcmp(connection, "Keep-Alive") == 0)) {
               client->keep_alive = 1;
+            } else if (connection == NULL) {
+              connection = "close";
+              client->keep_alive = 0;
             }
+            mime_type = get_mime_type(client->file_path);
 
-            char *final_connection_header =
-                (client->keep_alive == 1) ? "keep-alive" : "close";
             int build_headers_status =
-                build_headers(client, (long long)client->file_size,
-                              final_connection_header, mime_type);
+                build_headers(client, status_code, content_length,
+                              connection, mime_type);
             if (build_headers_status == -1) {
               close_connection(client);
               continue;

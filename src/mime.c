@@ -59,7 +59,7 @@ void load_mime_types(const char *filename) {
  * @param filename The name of the file.
  * @return The corresponding MIME type string, or a default type if not found.
  */
-const char *get_mime_type(const char *filename) {
+char *get_mime_type(const char *filename) {
   if (!mime_map) {
     return global_config->http->default_type;
   }
@@ -72,7 +72,7 @@ const char *get_mime_type(const char *filename) {
   ext++; // Skip the dot.
 
   // Look up the extension in the custom hash map.
-  const char *mime = (const char *)get_hashmap(mime_map, ext);
+  char *mime = (char *)get_hashmap(mime_map, ext);
 
   // Return the found MIME type or the default.
   return mime ? mime : global_config->http->default_type;
