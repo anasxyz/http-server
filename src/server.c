@@ -110,7 +110,7 @@ typedef struct client {
   size_t body_sent;
 
   int file_fd;
-  char file_data[BUFFER_SIZE];
+  char *file_data;
   size_t file_size;
   size_t file_sent;
   char file_path[256];
@@ -220,6 +220,7 @@ client_t *initialise_client() {
   client->body_len = 0;
   client->body_sent = 0;
 
+	client->file_data = (char*)malloc(global_config->http->body_buffer_size);
   client->file_fd = -1;
   client->file_size = 0;
   client->file_sent = 0;
@@ -289,6 +290,9 @@ void free_client(client_t *client) {
     if (client->timer_node) {
       remove_timer(client);
     }
+		if (client->file_data) {
+			free(client->file_data);
+		}
     free_request(client->request);
     free(client);
   }
@@ -658,6 +662,7 @@ void reset_client(client_t *client) {
     return;
   }
 
+	memset(client->file_data, 0, global_config->http->body_buffer_size);
   memset(client->request->method, 0, sizeof(client->request->method));
   memset(client->request->uri, 0, sizeof(client->request->uri));
   memset(client->request->http_version, 0,
