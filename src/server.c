@@ -483,8 +483,8 @@ int send_file_with_write(client_t *client) {
           return -1;
         } else {
           perror("write");
-					return -1;
-				}
+          return -1;
+        }
       } else if (bytes_written > 0) {
         bytes_left_to_write -= bytes_written;
         write_ptr += bytes_written;
@@ -663,11 +663,11 @@ void worker_loop(int *listen_sockets) {
 
           set_nonblocking(new_conn_fd);
 
-					int flag = 1;
-					if (setsockopt(new_conn_fd, IPPROTO_TCP, TCP_NODELAY, &flag,
-							 sizeof(flag)) == -1) {
-						perror("setsockopt TCP_NODELAY");
-					}
+          int flag = 1;
+          if (setsockopt(new_conn_fd, IPPROTO_TCP, TCP_NODELAY, &flag,
+                         sizeof(flag)) == -1) {
+            perror("setsockopt TCP_NODELAY");
+          }
 
           my_connections++;
           atomic_fetch_add(total_connections, 1);
@@ -842,22 +842,16 @@ void init_sockets(int *listen_sockets) {
   }
 }
 
-int main() {
+void setup_signals() {
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
   sa.sa_handler = handle_signal;
   sigaction(SIGINT, &sa, NULL);
 
   signal(SIGPIPE, SIG_IGN);
+}
 
-  setup_total_connections();
-
-  load_config();
-  load_mime_types(global_config->http->mime_types_path);
-
-  int listen_sockets[global_config->http->num_servers];
-  init_sockets(listen_sockets);
-
+void start(int *listen_sockets) {
   for (int i = 0; i < global_config->http->num_servers; i++) {
     printf("Master process %d is listening on port %d...\n", getpid(),
            global_config->http->servers[i].listen_port);
@@ -902,5 +896,19 @@ int main() {
   }
   free_mime_types();
   free_config();
+}
+
+int main() {
+  setup_signals();
+  setup_total_connections();
+
+  load_config();
+  load_mime_types(global_config->http->mime_types_path);
+
+  int listen_sockets[global_config->http->num_servers];
+  init_sockets(listen_sockets);
+
+	start(listen_sockets);
+
   return 0;
 }
