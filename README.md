@@ -7,30 +7,31 @@
 > ⚠️ This is an educational project.
 
 ## Features
-- ✅ Completely memory safe.
+- ✅ Supports HTTP/1.1 only.
 - ✅ Event-driven architecture with non-blocking I/O.
-- ✅ Support for keep-alive connections.
-- ✅ Basic Logging and monitoring with customisable access and error logs.
-- ✅ Easy to use compact configuration system with flexible syntax.
-- ✅ Support for virtual hosts (multiple domains on one server).
+- ✅ Fast and efficient zero-copy static file serving.
+- ✅ Directory autoindexing.
+- ✅ Easy to use configuration system.
+- ✅ Keep-alive connections and timeouts.
+- ✅ Virtual hosting.
 - ✅ Routing engine supporting URL rewriting and redirection, fallback files, and aliasing.
-- ✅ Fast and efficient zero-copy static file serving with full MIME type support and directory indexing.
+- ✅ Full MIME type support.
+
+## In Progress
+- ⏳ Reverse proxying to upstream backend servers.  
 
 ---
 
+- ❌ Logging and monitoring with access and error logs.
 - ❌ Support for HTTPS/TLS encryption.
-- ❌ Implementation of the HTTP protocol with request parsing and response generation.
-- ❌ Reverse proxying to upstream backend servers.  
 - ❌ Advanced configuration support for environment variables and dynamic reloads without downtime.
 - ❌ Security features including access control, hidden file protection, and IP address filtering.
 - ❌ HTTP/2 support with pipelining and request multiplexing.
-- ❌ Support for HTTP caching headers, ETags, and conditional GET requests. 
-- ❌ Compression support with gzip and brotli to optimise bandwidth usage.
-- ❌ Modular and extensible architecture with support for custom plugins and extensions.
-- ❌ Configurable rate limiting and connection throttling to protect against DDoS attacks.
+- ❌ HTTP caching headers, ETags, and conditional GET requests. 
+- ❌ Compression support with gzip and brotli.
+- ❌ Rate limiting and connection throttling.
+- ❌ Support for custom plugins and extensions.
 - ❌ Support for WebSocket proxying and HTTP/2 server push.
-
-## What I Learned
 
 ## Installation / Build Instructions
 
