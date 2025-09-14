@@ -61,6 +61,8 @@ typedef struct server_config {
 } server_config;
 
 typedef struct http_config {
+	long body_buffer_size;
+	long header_buffer_size;
   char *mime_types_path; // path to mime types file
   char *default_type;    // default MIME type when one isn't found
   char *access_log_path;

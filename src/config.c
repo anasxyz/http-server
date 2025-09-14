@@ -115,6 +115,46 @@ long parse_duration_ms(const char *str) {
   return -1; // unknown unit
 }
 
+long parse_buffer_size(const char *str) {
+  if (!str || !*str) {
+    return -1; // Empty string
+  }
+
+  char *end;
+  long value = strtol(str, &end, 10); // Parse the number part
+
+  if (end == str) {
+    return -1; // No number found
+  }
+
+  // Skip spaces after the number
+  while (isspace((unsigned char)*end)) {
+    end++;
+  }
+
+  // Convert the unit string to lowercase for case-insensitive comparison
+  char unit_str[5];
+  int i = 0;
+  while (*end && i < 4) {
+    unit_str[i++] = tolower((unsigned char)*end);
+    end++;
+  }
+  unit_str[i] = '\0';
+
+  // Check for units and return the value multiplied by the correct factor
+  if (strcmp(unit_str, "") == 0 || strcmp(unit_str, "b") == 0) {
+    return value; // Default to bytes if no unit or 'b'
+  } else if (strcmp(unit_str, "k") == 0 || strcmp(unit_str, "kb") == 0) {
+    return value * 1024;
+  } else if (strcmp(unit_str, "m") == 0 || strcmp(unit_str, "mb") == 0) {
+    return value * 1024 * 1024;
+  } else if (strcmp(unit_str, "g") == 0 || strcmp(unit_str, "gb") == 0) {
+    return value * 1024 * 1024 * 1024;
+  }
+
+  return -1; // Unknown unit
+}
+
 void parse_config() {
   FILE *file = fopen("server.conf", "r");
   if (file == NULL) {
@@ -131,7 +171,7 @@ void parse_config() {
   while (fgets(line, MAX_LINE_LENGTH, file) != NULL) {
     char *comment_pos = strchr(line, '#');
     if (comment_pos != NULL) {
-      *comment_pos = '\0'; 
+      *comment_pos = '\0';
     }
 
     char *colon_pos = strchr(line, ':');
@@ -167,7 +207,11 @@ void parse_config() {
         continue;
       }
     } else if (state == HTTP) {
-      if (strcmp(key, "mime") == 0) {
+			if (strcmp(key, "body_buffer_size") == 0) {
+				global_config->http->body_buffer_size = parse_buffer_size(value);
+			} else if (strcmp(key, "header_buffer_size") == 0) {
+				global_config->http->header_buffer_size = parse_buffer_size(value);
+			} else if (strcmp(key, "mime") == 0) {
         global_config->http->mime_types_path = strdup(value);
       } else if (strcmp(key, "default_type") == 0) {
         global_config->http->default_type = strdup(value);
@@ -178,8 +222,8 @@ void parse_config() {
       } else if (strcmp(key, "log_format") == 0) {
         global_config->http->log_format = strdup(value);
       } else if (strcmp(key, "sendfile") == 0) {
-				global_config->http->sendfile = (strcmp(value, "on") == 0);
-			} else if (strcmp(key, "host.new") == 0) {
+        global_config->http->sendfile = (strcmp(value, "on") == 0);
+      } else if (strcmp(key, "host.new") == 0) {
         // we are now in a server block
         state = SERVER;
         // increment the number of servers
@@ -515,4 +559,3 @@ void free_config() {
   free(global_config);
   global_config = NULL; // Prevent double-free
 }
-
