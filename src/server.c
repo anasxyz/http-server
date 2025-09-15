@@ -27,6 +27,9 @@
 #include "mime.h"
 #include "util.h"
 
+#define NAME "http-server"
+#define VERSION "0.5.1"
+
 #define MAX_EVENTS (2 * 1024)
 
 atomic_int *total_connections;
@@ -1173,12 +1176,13 @@ int is_server_running() {
   }
 }
 
-void print_usage(const char *prog_name) {
+void print_usage(char *prog_name) {
   printf("Usage: %s [start|stop|restart] [OPTIONS]\n", prog_name);
   printf("\nOptions:\n");
   printf("  -c <file>, --config <file>   Specify config file (default: "
          "server.conf)\n");
   printf("  -h, --help                   Show this help message\n");
+	printf("  -v, --version                Show version\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -1194,9 +1198,12 @@ int main(int argc, char *argv[]) {
   if (strcmp(command, "-h") == 0 || strcmp(command, "--help") == 0) {
     print_usage(argv[0]);
     return 0;
+  } else if (strcmp(command, "-v") == 0 || strcmp(command, "--version") == 0) {
+    printf("%s version %s\n", NAME, VERSION);
+    return 0;
   }
 
-  // Parse command-line arguments
+  // parse arguments
   for (int i = 1; i < argc - 1; i++) {
     if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
       config_path = argv[i + 1];
