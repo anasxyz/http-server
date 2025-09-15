@@ -202,7 +202,6 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
 */
 
 void exits() {
-  fprintf(stderr, "EXIT: Error occured. Exiting.");
   exit(1);
 }
 

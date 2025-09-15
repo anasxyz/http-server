@@ -1075,7 +1075,7 @@ void start(int *listen_sockets) {
   free_config();
 }
 
-int main() {
+void start_server() {
   setup_signals();
   setup_total_connections();
 
@@ -1086,6 +1086,15 @@ int main() {
   init_sockets(listen_sockets);
 
   start(listen_sockets);
+}
+
+int main(int argc, char *argv[]) {
+  for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "-c") == 0) {
+			printf("%s\n", argv[i + 1]);
+			break;
+		}
+	}
 
   return 0;
 }

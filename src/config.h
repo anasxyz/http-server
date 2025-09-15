@@ -88,7 +88,7 @@ typedef struct config {
 } config;
 
 void init_config();
-void parse_config();
+int parse_config();
 long parse_duration_ms(const char *str);
 void load_config();
 void free_config();

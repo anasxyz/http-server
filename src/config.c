@@ -25,7 +25,7 @@ void init_config() {
   if (global_config->http == NULL) {
     logs('E', "Couldn't allocate memory for http config.",
          "init_config() failed.");
-    free(global_config); // Clean up
+    free(global_config);
     exit(1);
   }
   memset(global_config->http, 0, sizeof(http_config));
@@ -117,22 +117,20 @@ long parse_duration_ms(const char *str) {
 
 long parse_buffer_size(const char *str) {
   if (!str || !*str) {
-    return -1; // Empty string
+    return -1;
   }
 
   char *end;
-  long value = strtol(str, &end, 10); // Parse the number part
+  long value = strtol(str, &end, 10);
 
   if (end == str) {
-    return -1; // No number found
+    return -1;
   }
 
-  // Skip spaces after the number
   while (isspace((unsigned char)*end)) {
     end++;
   }
 
-  // Convert the unit string to lowercase for case-insensitive comparison
   char unit_str[5];
   int i = 0;
   while (*end && i < 4) {
@@ -141,9 +139,8 @@ long parse_buffer_size(const char *str) {
   }
   unit_str[i] = '\0';
 
-  // Check for units and return the value multiplied by the correct factor
   if (strcmp(unit_str, "") == 0 || strcmp(unit_str, "b") == 0) {
-    return value; // Default to bytes if no unit or 'b'
+    return value;
   } else if (strcmp(unit_str, "k") == 0 || strcmp(unit_str, "kb") == 0) {
     return value * 1024;
   } else if (strcmp(unit_str, "m") == 0 || strcmp(unit_str, "mb") == 0) {
@@ -152,14 +149,14 @@ long parse_buffer_size(const char *str) {
     return value * 1024 * 1024 * 1024;
   }
 
-  return -1; // Unknown unit
+  return -1;
 }
 
-void parse_config() {
+int parse_config() {
   FILE *file = fopen("server.conf", "r");
   if (file == NULL) {
     logs('E', "Couldn't open server.conf.", "parse_config(): fopen() failed.");
-    exits();
+		return -1;
   }
 
   char line[MAX_LINE_LENGTH];
@@ -207,13 +204,13 @@ void parse_config() {
         continue;
       }
     } else if (state == HTTP) {
-			if (strcmp(key, "default_buffer_size") == 0) {
-				global_config->http->default_buffer_size = parse_buffer_size(value);
-			} else if (strcmp(key, "body_buffer_size") == 0) {
-				global_config->http->body_buffer_size = parse_buffer_size(value);
-			} else if (strcmp(key, "headers_buffer_size") == 0) {
-				global_config->http->headers_buffer_size = parse_buffer_size(value);
-			} else if (strcmp(key, "mime") == 0) {
+      if (strcmp(key, "default_buffer_size") == 0) {
+        global_config->http->default_buffer_size = parse_buffer_size(value);
+      } else if (strcmp(key, "body_buffer_size") == 0) {
+        global_config->http->body_buffer_size = parse_buffer_size(value);
+      } else if (strcmp(key, "headers_buffer_size") == 0) {
+        global_config->http->headers_buffer_size = parse_buffer_size(value);
+      } else if (strcmp(key, "mime") == 0) {
         global_config->http->mime_types_path = strdup(value);
       } else if (strcmp(key, "default_type") == 0) {
         global_config->http->default_type = strdup(value);
@@ -402,11 +399,16 @@ void parse_config() {
 
   global_config->http->num_servers = num_servers;
   fclose(file);
+
+	return 0;
 }
 
 void load_config() {
   init_config();
-  parse_config();
+	if (parse_config() == -1) {
+		printf("configuration file not found\n");
+		exits();
+	}
 }
 
 void free_config() {
@@ -414,7 +416,6 @@ void free_config() {
     return;
   }
 
-  // Free global configuration strings
   if (global_config->user)
     free(global_config->user);
   if (global_config->pid_file)
@@ -422,7 +423,6 @@ void free_config() {
   if (global_config->log_file)
     free(global_config->log_file);
 
-  // Free http configuration and its contents
   if (global_config->http != NULL) {
     if (global_config->http->mime_types_path)
       free(global_config->http->mime_types_path);
@@ -435,12 +435,10 @@ void free_config() {
     if (global_config->http->log_format)
       free(global_config->http->log_format);
 
-    // Free each server configuration and its contents
     if (global_config->http->servers) {
       for (int i = 0; i < global_config->http->num_servers; i++) {
         server_config *server = &global_config->http->servers[i];
 
-        // Free server-specific strings and string lists
         if (server->content_dir)
           free(server->content_dir);
         if (server->access_log_path)
@@ -450,7 +448,6 @@ void free_config() {
         if (server->log_format)
           free(server->log_format);
 
-        // Free server names string list
         if (server->server_names) {
           for (int j = 0; j < server->num_server_names; j++) {
             if (server->server_names[j]) {
@@ -460,7 +457,6 @@ void free_config() {
           free(server->server_names);
         }
 
-        // Free index files string list
         if (server->index_files) {
           for (int j = 0; j < server->num_index_files; j++) {
             if (server->index_files[j]) {
@@ -470,14 +466,12 @@ void free_config() {
           free(server->index_files);
         }
 
-        // Free SSL configuration if it exists
         if (server->ssl != NULL) {
           if (server->ssl->cert_file)
             free(server->ssl->cert_file);
           if (server->ssl->key_file)
             free(server->ssl->key_file);
 
-          // Free SSL protocols string list
           if (server->ssl->protocols) {
             for (int j = 0; j < server->ssl->num_protocols; j++) {
               if (server->ssl->protocols[j]) {
@@ -487,7 +481,6 @@ void free_config() {
             free(server->ssl->protocols);
           }
 
-          // Free SSL ciphers string list
           if (server->ssl->ciphers) {
             for (int j = 0; j < server->ssl->num_ciphers; j++) {
               if (server->ssl->ciphers[j]) {
@@ -500,12 +493,10 @@ void free_config() {
           free(server->ssl);
         }
 
-        // Free each route configuration and its contents
         if (server->routes) {
           for (int j = 0; j < server->num_routes; j++) {
             route_config *route = &server->routes[j];
 
-            // Free route-specific strings and string lists
             if (route->uri)
               free(route->uri);
             if (route->content_dir)
@@ -519,7 +510,6 @@ void free_config() {
             if (route->expires_header)
               free(route->expires_header);
 
-            // Free index files string list
             if (route->index_files) {
               for (int k = 0; k < route->num_index_files; k++) {
                 if (route->index_files[k]) {
@@ -529,7 +519,6 @@ void free_config() {
               free(route->index_files);
             }
 
-            // Free allowed IPs string list
             if (route->allowed_ips) {
               for (int k = 0; k < route->num_allowed_ips; k++) {
                 if (route->allowed_ips[k]) {
@@ -539,7 +528,6 @@ void free_config() {
               free(route->allowed_ips);
             }
 
-            // Free denied IPs string list
             if (route->denied_ips) {
               for (int k = 0; k < route->num_denied_ips; k++) {
                 if (route->denied_ips[k]) {
@@ -557,7 +545,6 @@ void free_config() {
     free(global_config->http);
   }
 
-  // Finally, free the main config struct
   free(global_config);
-  global_config = NULL; // Prevent double-free
+  global_config = NULL;
 }
