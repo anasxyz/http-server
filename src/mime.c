@@ -5,10 +5,15 @@
 #include "config.h"
 #include "hashmap.h"
 #include "mime.h"
+#include "util.h"
 
 static HashMap *mime_map = NULL;
 
-void load_mime_types(const char *filename) {
+void load_mime_types(char *filename) {
+	if (is_empty(filename)) {
+		filename = "/etc/http-server/mime.types";
+	}
+
   FILE *f = fopen(filename, "r");
   if (!f) {
     perror("fopen");

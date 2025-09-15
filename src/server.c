@@ -1186,7 +1186,7 @@ void print_usage(char *prog_name) {
 }
 
 int main(int argc, char *argv[]) {
-  char *config_path = "server.conf";
+  char *config_path = "/etc/http-server/http-server.conf";
 
   if (argc < 2) {
     print_usage(argv[0]);

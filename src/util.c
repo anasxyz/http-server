@@ -379,3 +379,7 @@ char *get_status_message(int code) {
     return "Unknown Status";
   }
 }
+
+int is_empty(char *str) {
+	return str == NULL || *str == '\0' || *str == '\n' || *str == '\r' || strcmp(str, "");
+}

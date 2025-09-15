@@ -37,4 +37,11 @@ int setup_listening_socket(int port);
  */
 char *get_status_message(int code);
 
+/**
+ * @brief checks if a string is empty.
+ * @param str the string to check.
+ * @return 1 if the string is empty, 0 otherwise.
+ */
+int is_empty(char *str);
+
 #endif // _UTIL_H_

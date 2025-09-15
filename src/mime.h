@@ -5,7 +5,7 @@
  * @brief loads mime types from a file.
  * @param filename the path to the file containing the mime types.
  */
-void load_mime_types(const char *filename);
+void load_mime_types(char *filename);
 
 /**
  * @brief gets the mime type for a given file extension.
