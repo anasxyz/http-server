@@ -4,6 +4,6 @@ cert.pem
 key.pem
 large_file.txt
 .clangd
-test_command.txt
+test_commands.txt
 logs.log
 backup

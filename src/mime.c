@@ -6,12 +6,13 @@
 #include "hashmap.h"
 #include "mime.h"
 #include "util.h"
+#include "defaults.h"
 
 static HashMap *mime_map = NULL;
 
 void load_mime_types(char *filename) {
 	if (is_empty(filename)) {
-		filename = "/etc/http-server/mime.types";
+		filename = DEFAULT_MIME_PATH;
 	}
 
   FILE *f = fopen(filename, "r");

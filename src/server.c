@@ -23,17 +23,14 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "defaults.h"
 #include "hashmap.h"
 #include "mime.h"
 #include "util.h"
 
-#define NAME "http-server"
-#define VERSION "0.5.1"
-
 #define MAX_EVENTS (2 * 1024)
 
 atomic_int *total_connections;
-
 long long request_count = 0;
 int my_connections = 0;
 
@@ -1038,8 +1035,13 @@ void setup_signals() {
 }
 
 void start(int *listen_sockets) {
+  char *pid_file = global_config->pid_file ;
+  if (is_empty(global_config->pid_file)) {
+		pid_file = DEFAULT_PID_FILE;
+  }
+
   if (global_config->pid_file) {
-    FILE *pidf = fopen(global_config->pid_file, "w");
+    FILE *pidf = fopen(pid_file, "w");
     if (!pidf) {
       perror("Failed to open pid_file");
       exit(EXIT_FAILURE);
@@ -1111,7 +1113,7 @@ void start_server() {
   start(listen_sockets);
 }
 
-int stop_server() {
+int kill_server() {
   FILE *f = fopen(global_config->pid_file, "r");
   if (!f)
     return -1;
@@ -1176,70 +1178,93 @@ int is_server_running() {
   }
 }
 
-void print_usage(char *prog_name) {
-  printf("Usage: %s [start|stop|restart] [OPTIONS]\n", prog_name);
+void print_usage() {
+  printf("Usage: %s [run | kill | restart] [OPTIONS]\n", NAME);
   printf("\nOptions:\n");
   printf("  -c <file>, --config <file>   Specify config file (default: "
-         "server.conf)\n");
+         "/etc/%s/%s.conf)\n",
+         NAME, NAME);
   printf("  -h, --help                   Show this help message\n");
-	printf("  -v, --version                Show version\n");
+  printf("  -v, --version                Show version\n");
+  printf("  -f, --foreground             Run the server in the foreground\n");
 }
 
 int main(int argc, char *argv[]) {
-  char *config_path = "/etc/http-server/http-server.conf";
+  char *config_path = DEFAULT_CONFIG_PATH;
+  int foreground = 0;
+  char *command = NULL;
 
   if (argc < 2) {
-    print_usage(argv[0]);
+    print_usage();
     return 1;
   }
 
-  char *command = argv[1];
-
-  if (strcmp(command, "-h") == 0 || strcmp(command, "--help") == 0) {
-    print_usage(argv[0]);
-    return 0;
-  } else if (strcmp(command, "-v") == 0 || strcmp(command, "--version") == 0) {
-    printf("%s version %s\n", NAME, VERSION);
-    return 0;
-  }
-
-  // parse arguments
-  for (int i = 1; i < argc - 1; i++) {
-    if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
-      config_path = argv[i + 1];
-      break;
+  // Parse all command-line arguments for flags and the main command
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+      print_usage();
+      return 0;
+    } else if (strcmp(argv[i], "-v") == 0 ||
+               strcmp(argv[i], "--version") == 0) {
+      printf("%s version %s\n", NAME, VERSION);
+      return 0;
+    } else if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
+      if (i + 1 < argc) {
+        config_path = argv[i + 1];
+        i++; // Skip the next argument as it's the config path
+      }
+    } else if (strcmp(argv[i], "-f") == 0 ||
+               strcmp(argv[i], "--foreground") == 0) {
+      foreground = 1;
+    } else {
+      // Assume the first argument that is not a flag is the command
+      if (command == NULL) {
+        command = argv[i];
+      }
     }
   }
 
-  load_config(config_path);
-	pid_t pid = getpid();
+  // Now, check the identified command
+  if (command == NULL) {
+    print_usage();
+    return 1;
+  }
 
-  if (strcmp(command, "start") == 0) {
+  load_config(config_path);
+  pid_t pid = getpid();
+
+  if (strcmp(command, "run") == 0) {
     if (is_server_running()) {
       fprintf(stderr, "Server is already running.\n");
       return 1;
     }
-		printf("Starting server with PID %d...\n", pid);
-		printf("Run '%s stop' to stop the server.\n", argv[0]);
+    printf("Starting server with PID %d...\n", pid);
+    printf("Run '%s stop' to stop the server.\n", argv[0]);
+    if (!foreground) {
+      daemonise();
+    }
     start_server();
-  } else if (strcmp(command, "stop") == 0) {
+  } else if (strcmp(command, "kill") == 0) {
     if (!is_server_running()) {
       fprintf(stderr, "Server is not running.\n");
       return 1;
     }
-		printf("Stopping server...\n");
-    stop_server();
+    printf("Killing server...\n");
+    kill_server();
   } else if (strcmp(command, "restart") == 0) {
     if (is_server_running()) {
-			printf("Restarting server...\n");
-      stop_server();
+      printf("Restarting server...\n");
+      kill_server();
+      sleep(1);
     }
-		sleep(1);
-		printf("New server instance started.\n");
+    printf("New server instance is running.\n");
+    if (!foreground) {
+      daemonise();
+    }
     start_server();
   } else {
     fprintf(stderr, "Unknown command '%s'\n", command);
-    print_usage(argv[0]);
+    print_usage();
     return 1;
   }
 

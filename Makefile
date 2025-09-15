@@ -21,6 +21,9 @@ CONFIG_SRC = config/$(CONFIG_FILE)
 MIME_FILE = mime.types
 MIME_SRC = config/$(MIME_FILE)
 
+PID_FILE = http-server.pid
+PID_DEST = /var/run/$(PID_FILE)
+
 all: $(TARGET)
 
 $(TARGET): $(SRC)
@@ -29,24 +32,33 @@ $(TARGET): $(SRC)
 	@echo "Build complete."
 
 install: $(TARGET)
-	# install binary
+# install binary
 	@echo "Installing $(TARGET) to $(BINDIR)..."
 	@mkdir -p $(DESTDIR)$(BINDIR)
 	@cp $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
 	@chmod 755 $(DESTDIR)$(BINDIR)/$(TARGET)
 	@echo "Binary installed to $(DESTDIR)$(BINDIR)/$(TARGET)"
+	@echo ""
 
-	# install config
+# install config
 	@echo "Setting up configuration in $(SYSCONFDIR)..."
 	@mkdir -p $(DESTDIR)$(SYSCONFDIR)
 	@cp $(CONFIG_SRC) $(DESTDIR)$(SYSCONFDIR)/$(CONFIG_FILE)
 	@echo "Installed default config to $(DESTDIR)$(SYSCONFDIR)/$(CONFIG_FILE)"
+	@echo ""
 
-	# install mime types
+# install mime types
 	@echo "Setting up mime types in $(SYSCONFDIR)..."
 	@mkdir -p $(DESTDIR)$(SYSCONFDIR)
 	@cp $(MIME_SRC) $(DESTDIR)$(SYSCONFDIR)/$(MIME_FILE)
 	@echo "Installed default mime types to $(DESTDIR)$(SYSCONFDIR)/$(MIME_FILE)"
+	@echo ""
+
+# install PID file
+	@echo "Setting up PID file in $(PID_DEST)..."
+	@touch $(PID_DEST)
+	@chmod 666 $(PID_DEST)
+	@echo "Installed default PID file to $(PID_DEST)"
 
 uninstall:
 	@echo "Removing binary $(TARGET) from $(BINDIR)..."
