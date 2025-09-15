@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <stdarg.h>
@@ -189,9 +190,7 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
 }
 */
 
-void exits() {
-  exit(1);
-}
+void exits() { exit(1); }
 
 int set_nonblocking(int fd) {
   int flags = fcntl(fd, F_GETFL, 0);
@@ -381,5 +380,17 @@ char *get_status_message(int code) {
 }
 
 int is_empty(char *str) {
-	return str == NULL || *str == '\0' || *str == '\n' || *str == '\r' || strcmp(str, "");
+  if (str == NULL || *str == '\0') {
+    return 1;
+  }
+
+  const char *ptr = str;
+  while (*ptr != '\0') {
+    if (!isspace((unsigned char)*ptr)) {
+      return 0;
+    }
+    ptr++;
+  }
+
+  return 1;
 }

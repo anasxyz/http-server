@@ -1027,7 +1027,7 @@ void setup_signals() {
   // handle Ctrl+C
   sigaction(SIGINT, &sa, NULL);
 
-  // handle kill / server stop command
+  // handle kill / server kill command
   sigaction(SIGTERM, &sa, NULL);
 
   // ignore broken pipe signals
@@ -1117,7 +1117,7 @@ int kill_server() {
   fclose(f);
 
   if (kill(pid, SIGTERM) == -1) {
-    perror("Failed to stop server");
+    perror("Failed to kill server");
     return -1;
   }
   return 0;
@@ -1154,22 +1154,135 @@ int is_server_running() {
 
   FILE *f = fopen(global_config->pid_file, "r");
   if (!f)
-    return 0; // PID file doesn't exist => server not running
+    return 0;
 
   int pid;
   if (fscanf(f, "%d", &pid) != 1) {
     fclose(f);
-    return 0; // Could not read PID => assume not running
+    return 0;
   }
   fclose(f);
 
-  // Check if process exists
   if (kill(pid, 0) == 0) {
-    return 1; // Process exists
+    return 1;
   } else {
     if (errno == ESRCH)
-      return 0; // No such process
-    return 1;   // Process exists but we may not have permissions
+      return 0;
+    return 1;
+  }
+}
+
+int get_total_connections() {
+	const char *shm_name = "/server_connections";
+
+  int shm_fd;
+  atomic_int *total_connections_shm;
+  int connection_count = -1;
+
+  // open the shared memory object in read-only mode
+  shm_fd = shm_open(shm_name, O_RDONLY, 0666);
+  if (shm_fd == -1) {
+    if (errno == ENOENT) {
+      return 0;
+    }
+    perror("ERROR: shm_open failed");
+    return -1;
+  }
+
+  total_connections_shm =
+      mmap(NULL, sizeof(atomic_int), PROT_READ, MAP_SHARED, shm_fd, 0);
+  if (total_connections_shm == MAP_FAILED) {
+    perror("ERROR: mmap failed");
+    close(shm_fd);
+    return -1;
+  }
+
+  connection_count = atomic_load(total_connections_shm);
+
+  munmap(total_connections_shm, sizeof(atomic_int));
+  close(shm_fd);
+
+  return connection_count;
+}
+void display_status() {
+  FILE *f;
+  int pid;
+
+  int status = is_server_running();
+  if (status == 0) {
+    printf("Server is not running.\n");
+    return;
+  } else if (status == -1) {
+    printf("Could not determine server status due to an error.\n");
+    return;
+  }
+
+  f = fopen(global_config->pid_file, "r");
+  if (!f) {
+    // this case should not be hit if is_server_running() returned 1
+    perror("Failed to open PID file after server was confirmed running");
+    return;
+  }
+  fscanf(f, "%d", &pid);
+  fclose(f);
+
+  printf("Server Status:\n");
+  printf("  PID: %d\n", pid);
+
+  // get the uptime by reading from the /proc filesystem
+  char proc_path[256];
+  snprintf(proc_path, sizeof(proc_path), "/proc/%d/stat", pid);
+
+  f = fopen(proc_path, "r");
+  if (f) {
+    long start_time_ticks;
+    long system_uptime_ticks;
+    long clock_ticks_per_sec = sysconf(_SC_CLK_TCK);
+
+    // read the 22nd field (start time) from the stat file
+    // the * in %*d tells scanf to read and discard the value
+    // reading all the fields is more robust than just seeking
+    if (fscanf(f,
+               "%*d %*s %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %*u %*u "
+               "%*d %*d %*d %*d %*d %*d %ld",
+               &start_time_ticks) == 1) {
+      fclose(f);
+
+      f = fopen("/proc/uptime", "r");
+      if (f) {
+        if (fscanf(f, "%ld", &system_uptime_ticks) == 1) {
+          fclose(f);
+
+          long uptime_seconds =
+              (long)(system_uptime_ticks -
+                     (start_time_ticks / (double)clock_ticks_per_sec));
+          long hours = uptime_seconds / 3600;
+          long minutes = (uptime_seconds % 3600) / 60;
+          long seconds = uptime_seconds % 60;
+
+          printf("  Uptime: %ldh %ldm %lds\n", hours, minutes, seconds);
+        } else {
+          fclose(f);
+          printf("  Error: Failed to read system uptime.\n");
+        }
+      } else {
+        printf("  Error: Failed to open /proc/uptime.\n");
+      }
+    } else {
+      fclose(f);
+      printf("  Error: Failed to parse process stat file.\n");
+    }
+  } else {
+    printf("  Error: Failed to open /proc/%d/stat. Check permissions or if the "
+           "process has terminated.\n",
+           pid);
+  }
+
+  printf("  Total Connections: %d\n", get_total_connections());
+
+  if (global_config) {
+    printf("  Config File: %s\n", global_config->pid_file);
+    printf("  Workers: %d\n", global_config->worker_processes);
   }
 }
 
@@ -1182,8 +1295,7 @@ void print_usage() {
   printf("  -h, --help                   Show this help message\n");
   printf("  -v, --version                Show version\n");
   printf("  -f, --foreground             Run the server in the foreground\n");
-  printf("  -pc, --print-config          Print the running server's "
-         "configuration\n");
+  printf("  -s, --status                 Check if the server is running\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -1196,7 +1308,24 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  // Parse all command-line arguments for flags and the main command
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
+      if (i + 1 < argc) {
+        config_path = argv[i + 1];
+        i++;
+      }
+    } else if (strcmp(argv[i], "-f") == 0 ||
+               strcmp(argv[i], "--foreground") == 0) {
+      foreground = 1;
+    } else {
+      if (command == NULL) {
+        command = argv[i];
+      }
+    }
+  }
+
+  load_config(config_path);
+
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       print_usage();
@@ -1205,30 +1334,21 @@ int main(int argc, char *argv[]) {
                strcmp(argv[i], "--version") == 0) {
       printf("%s version %s\n", NAME, VERSION);
       return 0;
-    } else if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
-      if (i + 1 < argc) {
-        config_path = argv[i + 1];
-        i++; // Skip the next argument as it's the config path
+    } else if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--status") == 0) {
+      if (is_server_running() == 1) {
+        display_status();
+      } else {
+        printf("Server is not running.\n");
       }
-    } else if (strcmp(argv[i], "-f") == 0 ||
-               strcmp(argv[i], "--foreground") == 0) {
-      foreground = 1;
-    } else {
-      // Assume the first argument that is not a flag is the command
-      if (command == NULL) {
-        command = argv[i];
-      }
+      return 0;
     }
   }
 
-  // Now, check the identified command
   if (command == NULL) {
     print_usage();
     return 1;
   }
 
-  load_config(config_path);
-	check_config();
   pid_t pid = getpid();
 
   if (strcmp(command, "run") == 0) {
@@ -1237,7 +1357,7 @@ int main(int argc, char *argv[]) {
       return 1;
     }
     printf("Starting server with PID %d...\n", pid);
-    printf("Run '%s stop' to stop the server.\n", argv[0]);
+    printf("Run '%s kill' to kill the server.\n", argv[0]);
     if (!foreground) {
       daemonise();
     }
