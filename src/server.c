@@ -1030,7 +1030,7 @@ void setup_signals() {
   // handle Ctrl+C
   sigaction(SIGINT, &sa, NULL);
 
-  // handle kill ./server stop
+  // handle kill / server stop command
   sigaction(SIGTERM, &sa, NULL);
 
   // ignore broken pipe signals
@@ -1212,23 +1212,30 @@ int main(int argc, char *argv[]) {
   }
 
   load_config(config_path);
+	pid_t pid = getpid();
 
   if (strcmp(command, "start") == 0) {
     if (is_server_running()) {
       fprintf(stderr, "Server is already running.\n");
       return 1;
     }
+		printf("Starting server with PID %d...\n", pid);
+		printf("Run '%s stop' to stop the server.\n", argv[0]);
     start_server();
   } else if (strcmp(command, "stop") == 0) {
     if (!is_server_running()) {
       fprintf(stderr, "Server is not running.\n");
       return 1;
     }
+		printf("Stopping server...\n");
     stop_server();
   } else if (strcmp(command, "restart") == 0) {
     if (is_server_running()) {
+			printf("Restarting server...\n");
       stop_server();
     }
+		sleep(1);
+		printf("New server instance started.\n");
     start_server();
   } else {
     fprintf(stderr, "Unknown command '%s'\n", command);
