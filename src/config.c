@@ -152,8 +152,8 @@ long parse_buffer_size(const char *str) {
   return -1;
 }
 
-int parse_config() {
-  FILE *file = fopen("server.conf", "r");
+int parse_config(char *config_file_path) {
+  FILE *file = fopen(config_file_path, "r");
   if (file == NULL) {
     logs('E', "Couldn't open server.conf.", "parse_config(): fopen() failed.");
 		return -1;
@@ -403,9 +403,9 @@ int parse_config() {
 	return 0;
 }
 
-void load_config() {
+void load_config(char *config_file_path) {
   init_config();
-	if (parse_config() == -1) {
+	if (parse_config(config_file_path) == -1) {
 		printf("configuration file not found\n");
 		exits();
 	}

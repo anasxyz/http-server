@@ -1029,6 +1029,16 @@ void setup_signals() {
 }
 
 void start(int *listen_sockets) {
+  if (global_config->pid_file) {
+    FILE *pidf = fopen(global_config->pid_file, "w");
+    if (!pidf) {
+      perror("Failed to open pid_file");
+      exit(EXIT_FAILURE);
+    }
+    fprintf(pidf, "%d\n", getpid());
+    fclose(pidf);
+  }
+
   for (int i = 0; i < global_config->http->num_servers; i++) {
     printf("Master process %d is listening on port %d...\n", getpid(),
            global_config->http->servers[i].listen_port);
@@ -1071,15 +1081,20 @@ void start(int *listen_sockets) {
   for (int i = 0; i < global_config->http->num_servers; i++) {
     close(listen_sockets[i]);
   }
+
+  if (global_config->pid_file) {
+    unlink(global_config->pid_file);
+  }
+
   free_mime_types();
   free_config();
 }
 
-void start_server() {
+void start_server(char *config_file_path) {
   setup_signals();
   setup_total_connections();
 
-  load_config();
+  load_config(config_file_path);
   load_mime_types(global_config->http->mime_types_path);
 
   int listen_sockets[global_config->http->num_servers];
@@ -1090,11 +1105,12 @@ void start_server() {
 
 int main(int argc, char *argv[]) {
   for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "-c") == 0) {
-			printf("%s\n", argv[i + 1]);
-			break;
-		}
-	}
+    if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
+      printf("%s\n", argv[i + 1]);
+      start_server(argv[i + 1]);
+      break;
+    }
+  }
 
   return 0;
 }
