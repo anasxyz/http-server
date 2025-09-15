@@ -1023,8 +1023,14 @@ void setup_signals() {
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
   sa.sa_handler = handle_signal;
+
+  // handle Ctrl+C
   sigaction(SIGINT, &sa, NULL);
 
+  // handle kill ./server stop
+  sigaction(SIGTERM, &sa, NULL);
+
+  // ignore broken pipe signals
   signal(SIGPIPE, SIG_IGN);
 }
 
@@ -1090,11 +1096,10 @@ void start(int *listen_sockets) {
   free_config();
 }
 
-void start_server(char *config_file_path) {
+void start_server() {
   setup_signals();
   setup_total_connections();
 
-  load_config(config_file_path);
   load_mime_types(global_config->http->mime_types_path);
 
   int listen_sockets[global_config->http->num_servers];
@@ -1103,13 +1108,68 @@ void start_server(char *config_file_path) {
   start(listen_sockets);
 }
 
+int stop_server() {
+  FILE *f = fopen(global_config->pid_file, "r");
+  if (!f)
+    return -1;
+  int pid;
+  fscanf(f, "%d", &pid);
+  fclose(f);
+
+  if (kill(pid, SIGTERM) == -1) {
+    perror("Failed to stop server");
+    return -1;
+  }
+  printf("Server stopped (PID %d)\n", pid);
+  return 0;
+}
+
+void daemonise() {
+  pid_t pid = fork();
+  if (pid < 0)
+    exit(EXIT_FAILURE); // fork failed
+  if (pid > 0)
+    exit(EXIT_SUCCESS); // parent exits
+
+  if (setsid() < 0)
+    exit(EXIT_FAILURE); // new session
+  signal(SIGCHLD, SIG_IGN);
+  signal(SIGHUP, SIG_IGN);
+
+  pid = fork();
+  if (pid < 0)
+    exit(EXIT_FAILURE);
+  if (pid > 0)
+    exit(EXIT_SUCCESS);
+
+  umask(0);
+
+  close(STDIN_FILENO);
+  close(STDOUT_FILENO);
+  close(STDERR_FILENO);
+}
+
 int main(int argc, char *argv[]) {
-  for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
-      printf("%s\n", argv[i + 1]);
-      start_server(argv[i + 1]);
-      break;
+  load_config("server.conf");
+
+  if (argc < 2) {
+    fprintf(stderr, "Usage: %s start|stop|restart -c <config>\n", argv[0]);
+    return 1;
+  }
+
+  if (strcmp(argv[1], "start") == 0) {
+		daemonise();
+    start_server();
+  } else if (strcmp(argv[1], "stop") == 0) {
+    if (stop_server() == -1) {
+      fprintf(stderr, "Server is not running.\n");
+      return 1;
     }
+  } else if (strcmp(argv[1], "restart") == 0) {
+    stop_server();
+    sleep(1);
+		daemonise();
+    start_server();
   }
 
   return 0;
