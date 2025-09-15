@@ -18,12 +18,13 @@
 - ✅ Full MIME type support.
 
 ## In Progress
-- ⏳ Reverse proxying to upstream backend servers.  
+- ⏳ CLI tool.
 
 ---
 
 - ❌ Logging and monitoring with access and error logs.
 - ❌ Support for HTTPS/TLS encryption.
+- ❌ Reverse proxying to upstream backend servers.  
 - ❌ Advanced configuration support for environment variables and dynamic reloads without downtime.
 - ❌ Security features including access control, hidden file protection, and IP address filtering.
 - ❌ HTTP/2 support with pipelining and request multiplexing.
