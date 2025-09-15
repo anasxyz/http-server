@@ -1120,7 +1120,6 @@ int stop_server() {
     perror("Failed to stop server");
     return -1;
   }
-  printf("Server stopped (PID %d)\n", pid);
   return 0;
 }
 
@@ -1149,27 +1148,85 @@ void daemonise() {
   close(STDERR_FILENO);
 }
 
+int is_server_running() {
+  if (!global_config->pid_file)
+    return 0;
+
+  FILE *f = fopen(global_config->pid_file, "r");
+  if (!f)
+    return 0; // PID file doesn't exist => server not running
+
+  int pid;
+  if (fscanf(f, "%d", &pid) != 1) {
+    fclose(f);
+    return 0; // Could not read PID => assume not running
+  }
+  fclose(f);
+
+  // Check if process exists
+  if (kill(pid, 0) == 0) {
+    return 1; // Process exists
+  } else {
+    if (errno == ESRCH)
+      return 0; // No such process
+    return 1;   // Process exists but we may not have permissions
+  }
+}
+
+void print_usage(const char *prog_name) {
+  printf("Usage: %s [start|stop|restart] [OPTIONS]\n", prog_name);
+  printf("\nOptions:\n");
+  printf("  -c <file>, --config <file>   Specify config file (default: "
+         "server.conf)\n");
+  printf("  -h, --help                   Show this help message\n");
+}
+
 int main(int argc, char *argv[]) {
-  load_config("server.conf");
+  char *config_path = "server.conf";
 
   if (argc < 2) {
-    fprintf(stderr, "Usage: %s start|stop|restart -c <config>\n", argv[0]);
+    print_usage(argv[0]);
     return 1;
   }
 
-  if (strcmp(argv[1], "start") == 0) {
-		daemonise();
+  char *command = argv[1];
+
+  if (strcmp(command, "-h") == 0 || strcmp(command, "--help") == 0) {
+    print_usage(argv[0]);
+    return 0;
+  }
+
+  // Parse command-line arguments
+  for (int i = 1; i < argc - 1; i++) {
+    if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
+      config_path = argv[i + 1];
+      break;
+    }
+  }
+
+  load_config(config_path);
+
+  if (strcmp(command, "start") == 0) {
+    if (is_server_running()) {
+      fprintf(stderr, "Server is already running.\n");
+      return 1;
+    }
     start_server();
-  } else if (strcmp(argv[1], "stop") == 0) {
-    if (stop_server() == -1) {
+  } else if (strcmp(command, "stop") == 0) {
+    if (!is_server_running()) {
       fprintf(stderr, "Server is not running.\n");
       return 1;
     }
-  } else if (strcmp(argv[1], "restart") == 0) {
     stop_server();
-    sleep(1);
-		daemonise();
+  } else if (strcmp(command, "restart") == 0) {
+    if (is_server_running()) {
+      stop_server();
+    }
     start_server();
+  } else {
+    fprintf(stderr, "Unknown command '%s'\n", command);
+    print_usage(argv[0]);
+    return 1;
   }
 
   return 0;

@@ -406,7 +406,7 @@ int parse_config(char *config_file_path) {
 void load_config(char *config_file_path) {
   init_config();
 	if (parse_config(config_file_path) == -1) {
-		printf("configuration file not found\n");
+		printf("Configuration file not found.\n");
 		exits();
 	}
 }
