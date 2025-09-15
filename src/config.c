@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "util.h"
+#include "defaults.h"
 
 #define MAX_LINE_LENGTH 1024
 
@@ -156,7 +157,7 @@ int parse_config(char *config_file_path) {
   FILE *file = fopen(config_file_path, "r");
   if (file == NULL) {
     logs('E', "Couldn't open server.conf.", "parse_config(): fopen() failed.");
-		return -1;
+    return -1;
   }
 
   char line[MAX_LINE_LENGTH];
@@ -400,15 +401,15 @@ int parse_config(char *config_file_path) {
   global_config->http->num_servers = num_servers;
   fclose(file);
 
-	return 0;
+  return 0;
 }
 
 void load_config(char *config_file_path) {
   init_config();
-	if (parse_config(config_file_path) == -1) {
-		printf("Configuration file not found.\n");
-		exits();
-	}
+  if (parse_config(config_file_path) == -1) {
+    printf("Configuration file not found.\n");
+    exits();
+  }
 }
 
 void free_config() {
@@ -547,4 +548,22 @@ void free_config() {
 
   free(global_config);
   global_config = NULL;
+}
+
+// TEMPORARILY INCOMPLETE
+void check_config() {
+  if (is_empty(global_config->pid_file)) {
+    global_config->pid_file = DEFAULT_PID_FILE;
+  }
+
+	if (is_empty(global_config->log_file)) {
+		global_config->log_file = DEFAULT_LOG_FILE;
+	}
+
+	if (is_empty(global_config->http->mime_types_path)) {
+		printf("MIME IS EMPTY IN CONFIG, USING DEFAULT BUILT IN %s\n", DEFAULT_MIME_PATH);
+		global_config->http->mime_types_path = DEFAULT_MIME_PATH;
+	} else {
+		printf("MIME IS NOT EMPTY IN CONFIG, USING %s\n", global_config->http->mime_types_path);
+	}
 }

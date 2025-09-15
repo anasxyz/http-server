@@ -132,4 +132,9 @@ void free_config();
  */
 char *trim(char *str);
 
+/**
+ * @brief checks the configuration for any missing values.
+ */
+void check_config();
+
 #endif // _CONFIG_H_

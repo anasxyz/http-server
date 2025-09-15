@@ -1035,13 +1035,8 @@ void setup_signals() {
 }
 
 void start(int *listen_sockets) {
-  char *pid_file = global_config->pid_file ;
-  if (is_empty(global_config->pid_file)) {
-		pid_file = DEFAULT_PID_FILE;
-  }
-
   if (global_config->pid_file) {
-    FILE *pidf = fopen(pid_file, "w");
+    FILE *pidf = fopen(global_config->pid_file, "w");
     if (!pidf) {
       perror("Failed to open pid_file");
       exit(EXIT_FAILURE);
@@ -1187,6 +1182,8 @@ void print_usage() {
   printf("  -h, --help                   Show this help message\n");
   printf("  -v, --version                Show version\n");
   printf("  -f, --foreground             Run the server in the foreground\n");
+  printf("  -pc, --print-config          Print the running server's "
+         "configuration\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -1231,6 +1228,7 @@ int main(int argc, char *argv[]) {
   }
 
   load_config(config_path);
+	check_config();
   pid_t pid = getpid();
 
   if (strcmp(command, "run") == 0) {

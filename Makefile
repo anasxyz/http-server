@@ -24,6 +24,9 @@ MIME_SRC = config/$(MIME_FILE)
 PID_FILE = http-server.pid
 PID_DEST = /var/run/$(PID_FILE)
 
+LOG_FILE = http-server.log
+LOG_DEST = /var/log/http-server/$(LOG_FILE)
+
 all: $(TARGET)
 
 $(TARGET): $(SRC)
@@ -59,6 +62,13 @@ install: $(TARGET)
 	@touch $(PID_DEST)
 	@chmod 666 $(PID_DEST)
 	@echo "Installed default PID file to $(PID_DEST)"
+	@echo ""
+
+# install log file
+	@echo "Setting up log file in $(LOG_DEST)..."
+	@touch $(LOG_DEST)
+	@chmod 666 $(LOG_DEST)
+	@echo "Installed default log file to $(LOG_DEST)"
 
 uninstall:
 	@echo "Removing binary $(TARGET) from $(BINDIR)..."
