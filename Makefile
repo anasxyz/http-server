@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -O2
+CFLAGS = -O0 -g -fno-omit-frame-pointer
 
 # Glib flags
 PKG_CFLAGS = $(shell pkg-config --cflags glib-2.0)

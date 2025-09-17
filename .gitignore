@@ -2,6 +2,7 @@ server
 http-server
 cert.pem
 key.pem
+notes.txt
 large_file.txt
 .clangd
 test_commands.txt
