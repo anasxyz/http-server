@@ -45,7 +45,9 @@ $ sudo make install
 ```
 
 ## Usage
-
+```
+$ http-server run
+```
 
 ## Configuration
 
