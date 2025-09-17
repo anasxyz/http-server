@@ -2,7 +2,7 @@
 
 # http-server
 
-**A lightweight HTTP web server written from scratch in C**  
+**HTTP server written from scratch in C**  
 
 > ⚠️ This is an educational project.
 
