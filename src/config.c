@@ -1,9 +1,12 @@
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "config.h"
+#include "defaults.h"
 #include "util.h"
 
 #define MAX_LINE_LENGTH 1024
@@ -115,6 +118,27 @@ long parse_duration_ms(const char *str) {
   return -1; // unknown unit
 }
 
+int path_exists(const char *path) {
+  // struct stat is a structure that holds information about the file
+  struct stat info;
+
+  // stat() returns 0 on success (file exists), and -1 on failure
+  if (stat(path, &info) == 0) {
+    return 0; // Path exists
+  } else {
+    // If stat() failed, it's likely because the path doesn't exist
+    // or there was a permission issue.
+    // errno can be checked to confirm the reason.
+    if (errno == ENOENT) {
+      return 1; // Path does not exist
+    }
+
+    // Handle other errors, like EACCES (permission denied)
+    perror("Error checking path existence");
+    return -1;
+  }
+}
+
 long parse_buffer_size(const char *str) {
   if (!str || !*str) {
     return -1;
@@ -152,11 +176,11 @@ long parse_buffer_size(const char *str) {
   return -1;
 }
 
-int parse_config() {
-  FILE *file = fopen("server.conf", "r");
+int parse_config(char *config_file_path) {
+  FILE *file = fopen(config_file_path, "r");
   if (file == NULL) {
     logs('E', "Couldn't open server.conf.", "parse_config(): fopen() failed.");
-		return -1;
+    return -1;
   }
 
   char line[MAX_LINE_LENGTH];
@@ -190,38 +214,98 @@ int parse_config() {
 
     if (state == GLOBAL) {
       if (strcmp(key, "max_connections") == 0) {
-        global_config->max_connections = atoi(value);
+        if (is_empty(value)) {
+          global_config->max_connections = DEFAULT_MAX_CONNECTIONS;
+        } else {
+          global_config->max_connections = atoi(value);
+        }
       } else if (strcmp(key, "worker_processes") == 0) {
-        global_config->worker_processes = atoi(value);
+        if (is_empty(value)) {
+          global_config->worker_processes = DEFAULT_WORKER_PROCESSES;
+        } else {
+          global_config->worker_processes = atoi(value);
+        }
       } else if (strcmp(key, "user") == 0) {
-        global_config->user = strdup(value);
+        if (is_empty(value)) {
+          global_config->user = strdup(DEFAULT_USER);
+        } else {
+          global_config->user = strdup(value);
+        }
       } else if (strcmp(key, "pid_file") == 0) {
-        global_config->pid_file = strdup(value);
+        if (is_empty(value)) {
+          global_config->pid_file = strdup(DEFAULT_PID_FILE);
+        } else {
+          global_config->pid_file = strdup(value);
+        }
       } else if (strcmp(key, "log_file") == 0) {
-        global_config->log_file = strdup(value);
+        if (is_empty(value)) {
+          global_config->log_file = strdup(DEFAULT_LOG_FILE);
+        } else {
+          global_config->log_file = strdup(value);
+        }
       } else if (strcmp(key, "http.new") == 0) {
         state = HTTP; // we are now in the http block
         continue;
       }
     } else if (state == HTTP) {
       if (strcmp(key, "default_buffer_size") == 0) {
-        global_config->http->default_buffer_size = parse_buffer_size(value);
+        if (is_empty(value)) {
+          global_config->http->default_buffer_size =
+              DEFAULT_DEFAULT_BUFFER_SIZE;
+        } else {
+          global_config->http->default_buffer_size = parse_buffer_size(value);
+        }
       } else if (strcmp(key, "body_buffer_size") == 0) {
-        global_config->http->body_buffer_size = parse_buffer_size(value);
+        if (is_empty(value)) {
+          global_config->http->body_buffer_size = DEFAULT_BODY_BUFFER_SIZE;
+        } else {
+          global_config->http->body_buffer_size = parse_buffer_size(value);
+        }
       } else if (strcmp(key, "headers_buffer_size") == 0) {
-        global_config->http->headers_buffer_size = parse_buffer_size(value);
+        if (is_empty(value)) {
+          global_config->http->headers_buffer_size =
+              DEFAULT_HEADERS_BUFFER_SIZE;
+        } else {
+          global_config->http->headers_buffer_size = parse_buffer_size(value);
+        }
       } else if (strcmp(key, "mime") == 0) {
-        global_config->http->mime_types_path = strdup(value);
+        if (is_empty(value)) {
+          global_config->http->mime_types_path = strdup(DEFAULT_MIME_PATH);
+        } else if (path_exists(value) != 0) {
+          global_config->http->mime_types_path = strdup(DEFAULT_MIME_PATH);
+        } else {
+          global_config->http->mime_types_path = strdup(value);
+        }
       } else if (strcmp(key, "default_type") == 0) {
-        global_config->http->default_type = strdup(value);
+        if (is_empty(value)) {
+          global_config->http->default_type = strdup(DEFAULT_DEFAULT_TYPE);
+        } else {
+          global_config->http->default_type = strdup(value);
+        }
       } else if (strcmp(key, "access_log") == 0) {
-        global_config->http->access_log_path = strdup(value);
+        if (is_empty(value)) {
+          global_config->http->access_log_path = strdup(DEFAULT_ACCESS_LOG);
+        } else {
+          global_config->http->access_log_path = strdup(value);
+        }
       } else if (strcmp(key, "error_log") == 0) {
-        global_config->http->error_log_path = strdup(value);
+        if (is_empty(value)) {
+          global_config->http->error_log_path = strdup(DEFAULT_ERROR_LOG);
+        } else {
+          global_config->http->error_log_path = strdup(value);
+        }
       } else if (strcmp(key, "log_format") == 0) {
-        global_config->http->log_format = strdup(value);
+        if (is_empty(value)) {
+          global_config->http->log_format = strdup(DEFAULT_LOG_FORMAT);
+        } else {
+          global_config->http->log_format = strdup(value);
+        }
       } else if (strcmp(key, "sendfile") == 0) {
-        global_config->http->sendfile = (strcmp(value, "on") == 0);
+        if (is_empty(value)) {
+          global_config->http->sendfile = DEFAULT_SENDFILE;
+        } else {
+          global_config->http->sendfile = (strcmp(value, "on") == 0);
+        }
       } else if (strcmp(key, "host.new") == 0) {
         // we are now in a server block
         state = SERVER;
@@ -400,15 +484,21 @@ int parse_config() {
   global_config->http->num_servers = num_servers;
   fclose(file);
 
-	return 0;
+  return 0;
 }
 
-void load_config() {
+void load_config(char *config_file_path) {
+  if (path_exists(config_file_path) == -1) {
+    printf("Configuration file not found.\n");
+    exits();
+  }
+
   init_config();
-	if (parse_config() == -1) {
-		printf("configuration file not found\n");
-		exits();
-	}
+
+  if (parse_config(config_file_path) == -1) {
+    printf("Error parsing configuration file.\n");
+    exits();
+  }
 }
 
 void free_config() {
@@ -547,4 +637,24 @@ void free_config() {
 
   free(global_config);
   global_config = NULL;
+}
+
+// TEMPORARILY INCOMPLETE
+void check_config() {
+  if (is_empty(global_config->pid_file)) {
+    global_config->pid_file = DEFAULT_PID_FILE;
+  }
+
+  if (is_empty(global_config->log_file)) {
+    global_config->log_file = DEFAULT_LOG_FILE;
+  }
+
+  if (is_empty(global_config->http->mime_types_path)) {
+    printf("MIME IS EMPTY IN CONFIG, USING DEFAULT BUILT IN %s\n",
+           DEFAULT_MIME_PATH);
+    global_config->http->mime_types_path = DEFAULT_MIME_PATH;
+  } else {
+    printf("MIME IS NOT EMPTY IN CONFIG, USING %s\n",
+           global_config->http->mime_types_path);
+  }
 }

@@ -1,8 +1,10 @@
 server
+http-server
 cert.pem
 key.pem
+notes.txt
 large_file.txt
 .clangd
-test_command.txt
+test_commands.txt
 logs.log
 backup

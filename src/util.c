@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <stdarg.h>
@@ -24,14 +25,11 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
     return;
   }
 
-  // Determine the log file based on the process ID
   char log_filename[256];
   snprintf(log_filename, sizeof(log_filename), "worker_%d.log", getpid());
 
-  // Open the file in append mode. This is crucial for keeping a continuous log.
   FILE *log_file = fopen(log_filename, "a");
   if (!log_file) {
-    // Fallback to stderr if file cannot be opened
     log_file = stderr;
   }
 
@@ -41,7 +39,6 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
   va_list args_copy;
   va_copy(args_copy, args);
 
-  // Print prefix to the selected file stream
   switch (type) {
   case 'E':
     fprintf(log_file, "[ERROR] ");
@@ -60,15 +57,13 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
     va_end(args);
     va_end(args_copy);
     if (log_file != stderr)
-      fclose(log_file); // Close file if opened
+      fclose(log_file);
     return;
   }
 
-  // Print main message
   vfprintf(log_file, fmt, args);
   fprintf(log_file, "\n");
 
-  // Print extra if in verbose mode
   if (extra_fmt && verbose_mode_enabled) {
     fprintf(log_file, "EXTRA: ");
     vfprintf(log_file, extra_fmt, args_copy);
@@ -78,7 +73,6 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
   va_end(args);
   va_end(args_copy);
 
-  // Close the file stream. This flushes the buffer and ensures data is written.
   if (log_file != stderr) {
     fclose(log_file);
   }
@@ -109,8 +103,7 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
   va_list args_copy;
   va_copy(args_copy, args);
 
-  // Print timestamp and prefix to the selected file stream
-  fprintf(log_file, "%s", timestamp); // Print the timestamp first
+  fprintf(log_file, "%s", timestamp);
 
   switch (type) {
   case 'E':
@@ -160,11 +153,9 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
   va_list args;
   va_start(args, extra_fmt);
 
-  // copy the variadic arguments so we can use them twice
   va_list args_copy;
   va_copy(args_copy, args);
 
-  // print prefix
   switch (type) {
   case 'E':
     fprintf(stderr, "ERROR: ");
@@ -185,11 +176,9 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
     return;
   }
 
-  // print main message
   vfprintf(stderr, fmt, args);
   fprintf(stderr, "\n");
 
-  // print extra if in verbose mode
   if (extra_fmt && verbose_mode_enabled) {
     fprintf(stderr, "EXTRA: ");
     vfprintf(stderr, extra_fmt, args_copy);
@@ -201,9 +190,7 @@ void logs(char type, const char *fmt, const char *extra_fmt, ...) {
 }
 */
 
-void exits() {
-  exit(1);
-}
+void exits() { exit(1); }
 
 int set_nonblocking(int fd) {
   int flags = fcntl(fd, F_GETFL, 0);
@@ -390,4 +377,20 @@ char *get_status_message(int code) {
   default:
     return "Unknown Status";
   }
+}
+
+int is_empty(char *str) {
+  if (str == NULL || *str == '\0') {
+    return 1;
+  }
+
+  const char *ptr = str;
+  while (*ptr != '\0') {
+    if (!isspace((unsigned char)*ptr)) {
+      return 0;
+    }
+    ptr++;
+  }
+
+  return 1;
 }

@@ -1,18 +1,22 @@
 #ifndef MIME_H
 #define MIME_H
 
-// Function to load MIME types from a file.
-// Populates an internal hash map with file extensions and their corresponding
-// MIME types.
-void load_mime_types(const char *filename);
+/**
+ * @brief loads mime types from a file.
+ * @param filename the path to the file containing the mime types.
+ */
+void load_mime_types(char *filename);
 
-// Function to get the MIME type for a given filename based on its extension.
-// Returns a const char* to the MIME type string or a default value if not
-// found.
+/**
+ * @brief gets the mime type for a given file extension.
+ * @param filename the path to the file.
+ * @return a pointer to the mime type string, or the default type if not found.
+ */
 char *get_mime_type(const char *filename);
 
-// Function to free all memory associated with the MIME types hash map.
-// This should be called on program exit to prevent memory leaks.
+/**
+ * @brief frees all memory allocated for the mime types.
+ */
 void free_mime_types();
 
 #endif // MIME_H
