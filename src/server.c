@@ -22,13 +22,13 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "config.h"
 #include "cli.h"
+#include "config.h"
 #include "hashmap.h"
 #include "mime.h"
-#include "util.h"
 #include "server.h"
 #include "timer_wheel.h"
+#include "util.h"
 
 atomic_int *total_connections;
 long long request_count = 0;
@@ -74,6 +74,8 @@ client_t *initialise_client() {
     return NULL;
   }
   memset(client, 0, sizeof(client_t));
+
+	client->total_bytes_sent = 0;
 
   client->fd = -1;
   client->epoll_fd = -1;
@@ -150,8 +152,9 @@ void free_client(client_t *client) {
     if (client->request_buffer)
       free(client->request_buffer);
 
-    if (client->timer_node)
+    if (client->timer_node) {
       remove_timer(client);
+    }
 
     free_request(client->request);
 
@@ -172,6 +175,9 @@ void close_connection(client_t *client) {
 
   close(client->fd);
 
+  printf("Client %d timed out after %ld seconds (fd=%d)\n", getpid(),
+         client->parent_server->timeout / 1000, client->fd);
+  fflush(stdout);
   free_client(client);
 
   my_connections--;
@@ -271,6 +277,8 @@ int send_headers(client_t *client) {
     const char *to_write = client->header_data + client->header_sent;
     int to_write_len = client->header_len - client->header_sent;
     ssize_t bytes_written = write(client->fd, to_write, to_write_len);
+		
+		// printf("header bytes written: %ld\n", bytes_written);
 
     if (bytes_written > 0) {
       client->header_sent += bytes_written;
@@ -457,11 +465,11 @@ int send_file_with_write(client_t *client) {
 }
 
 int send_file_with_sendfile(client_t *client) {
-  off_t offset = client->file_sent;
-
   while (client->file_sent < client->file_size) {
-    ssize_t bytes_sent = sendfile(client->fd, client->file_fd, &offset,
+    ssize_t bytes_sent = sendfile(client->fd, client->file_fd, &client->file_sent,
                                   client->file_size - client->file_sent);
+		// printf("bytes sent: %ld\n", bytes_sent);
+		client->total_bytes_sent += bytes_sent;
 
     if (bytes_sent == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -477,8 +485,6 @@ int send_file_with_sendfile(client_t *client) {
     if (bytes_sent == 0) {
       break;
     }
-
-    client->file_sent += bytes_sent;
   }
 
   if (client->file_sent >= client->file_size) {
@@ -512,6 +518,7 @@ int build_headers(client_t *client, int status_code, long long content_length,
 }
 
 void reset_client(client_t *client) {
+	client->total_bytes_sent = 0;
   // reset request data
   memset(client->request->method, 0, sizeof(client->request->method));
   memset(client->request->uri, 0, sizeof(client->request->uri));
@@ -717,6 +724,7 @@ void worker_loop(int *listen_sockets) {
 
         if (events[i].events & EPOLLIN) {
           remove_timer(client);
+
           if (client->request_complete) {
             continue;
           }
@@ -748,6 +756,8 @@ void worker_loop(int *listen_sockets) {
           }
 
           if (client->request_complete) {
+						// printf("Request: %s\n", client->request_buffer);
+
             int status_code;
             long long content_length;
             char *connection;
@@ -827,6 +837,7 @@ void worker_loop(int *listen_sockets) {
           }
 
           if (client->send_state == SEND_STATE_DONE) {
+						// printf("Total bytes sent: %lld\n", client->total_bytes_sent);
             if (client->keep_alive == 1) {
               reset_client(client);
               add_timer(client, client->parent_server->timeout);
@@ -957,8 +968,4 @@ void start_server() {
   start(listen_sockets);
 }
 
-
-int main(int argc, char *argv[]) {
-
-  return cli_handler(argc, argv);
-}
+int main(int argc, char *argv[]) { return cli_handler(argc, argv); }

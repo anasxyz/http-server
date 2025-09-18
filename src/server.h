@@ -34,6 +34,8 @@ typedef struct client {
 
   send_state_t send_state;
 
+	long long total_bytes_sent;
+
   char *header_data;
   size_t header_len;
   size_t header_sent;
@@ -45,7 +47,7 @@ typedef struct client {
   int file_fd;
   char *file_data;
   size_t file_size;
-  size_t file_sent;
+  off_t file_sent;
   char file_path[256];
 
   char *request_buffer;
