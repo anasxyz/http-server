@@ -10,8 +10,6 @@
 #define MAX_EVENTS (2 * 1024)
 
 typedef struct timer_node timer_node_t;
-#define WHEEL_SIZE 60
-#define TICK_INTERVAL_SECONDS 1
 
 typedef struct request {
   char method[10];
@@ -62,12 +60,6 @@ typedef struct client {
 
   timer_node_t *timer_node;
 } client_t;
-
-struct timer_node {
-  client_t *client;
-  timer_node_t *prev;
-  timer_node_t *next;
-};
 
 void handle_singal(int sig);
 void worker_signal_handler(int sig);
