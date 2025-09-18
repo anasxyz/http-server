@@ -270,8 +270,14 @@ int parse_config(char *config_file_path) {
         }
       } else if (strcmp(key, "mime") == 0) {
         if (is_empty(value)) {
+          printf(
+              "Cannot find mime file %s. Using default mime file path %s\n",
+              value, DEFAULT_MIME_PATH);
           global_config->http->mime_types_path = strdup(DEFAULT_MIME_PATH);
         } else if (path_exists(value) != 0) {
+          printf(
+              "Cannot find mime file %s. Using default mime file path %s\n",
+              value, DEFAULT_MIME_PATH);
           global_config->http->mime_types_path = strdup(DEFAULT_MIME_PATH);
         } else {
           global_config->http->mime_types_path = strdup(value);
@@ -639,22 +645,22 @@ void free_config() {
   global_config = NULL;
 }
 
-// TEMPORARILY INCOMPLETE
 void check_config() {
   if (is_empty(global_config->pid_file)) {
-    global_config->pid_file = DEFAULT_PID_FILE;
+    printf("PID file path not specified in config. Using default %s\n",
+           DEFAULT_PID_FILE);
+    global_config->pid_file = strdup(DEFAULT_PID_FILE);
   }
 
   if (is_empty(global_config->log_file)) {
-    global_config->log_file = DEFAULT_LOG_FILE;
+    printf("log file path not specified in config. Using default %s\n",
+           DEFAULT_LOG_FILE);
+    global_config->log_file = strdup(DEFAULT_LOG_FILE);
   }
 
   if (is_empty(global_config->http->mime_types_path)) {
-    printf("MIME IS EMPTY IN CONFIG, USING DEFAULT BUILT IN %s\n",
+    printf("MIME file path not specified in config. Using default %s\n",
            DEFAULT_MIME_PATH);
-    global_config->http->mime_types_path = DEFAULT_MIME_PATH;
-  } else {
-    printf("MIME IS NOT EMPTY IN CONFIG, USING %s\n",
-           global_config->http->mime_types_path);
+    global_config->http->mime_types_path = strdup(DEFAULT_MIME_PATH);
   }
 }

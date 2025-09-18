@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -O0 -g -fno-omit-frame-pointer
+CFLAGS = -O2 -g -fno-omit-frame-pointer -Wno-unused-variable -Wno-unused-function -Wno-unused-parameter -Wno-unused-result
 
 # Glib flags
 PKG_CFLAGS = $(shell pkg-config --cflags glib-2.0)
@@ -31,7 +31,7 @@ all: $(TARGET)
 
 $(TARGET): $(SRC)
 	@echo "Building $(TARGET)..."
-	$(CC) $(CFLAGS) $(PKG_CFLAGS) -o $(TARGET) $(SRC) $(PKG_LDFLAGS) $(OPENSSL_LDFLAGS)
+	@$(CC) $(CFLAGS) $(PKG_CFLAGS) -o $(TARGET) $(SRC) $(PKG_LDFLAGS) $(OPENSSL_LDFLAGS)
 	@echo "Build complete."
 
 install: $(TARGET)
@@ -40,40 +40,30 @@ install: $(TARGET)
 	@mkdir -p $(DESTDIR)$(BINDIR)
 	@cp $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
 	@chmod 755 $(DESTDIR)$(BINDIR)/$(TARGET)
-	@echo "Binary installed to $(DESTDIR)$(BINDIR)/$(TARGET)"
-	@echo ""
 
 # install config
 	@echo "Setting up configuration in $(SYSCONFDIR)..."
 	@mkdir -p $(DESTDIR)$(SYSCONFDIR)
 	@cp $(CONFIG_SRC) $(DESTDIR)$(SYSCONFDIR)/$(CONFIG_FILE)
-	@echo "Installed default config to $(DESTDIR)$(SYSCONFDIR)/$(CONFIG_FILE)"
-	@echo ""
 
 # install mime types
 	@echo "Setting up mime types in $(SYSCONFDIR)..."
 	@mkdir -p $(DESTDIR)$(SYSCONFDIR)
 	@cp $(MIME_SRC) $(DESTDIR)$(SYSCONFDIR)/$(MIME_FILE)
-	@echo "Installed default mime types to $(DESTDIR)$(SYSCONFDIR)/$(MIME_FILE)"
-	@echo ""
 
 # install PID file
 	@echo "Setting up PID file in $(PID_DEST)..."
 	@touch $(PID_DEST)
 	@chmod 666 $(PID_DEST)
-	@echo "Installed default PID file to $(PID_DEST)"
-	@echo ""
 
 # install log file
 	@echo "Setting up log file in $(LOG_DEST)..."
 	@touch $(LOG_DEST)
 	@chmod 666 $(LOG_DEST)
-	@echo "Installed default log file to $(LOG_DEST)"
 
 uninstall:
 	@echo "Removing binary $(TARGET) from $(BINDIR)..."
 	@rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
-	@echo "Uninstall complete. Configuration files are preserved."
 
 clean:
 	@echo "Cleaning build artifacts..."
