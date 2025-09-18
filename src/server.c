@@ -175,9 +175,10 @@ void close_connection(client_t *client) {
 
   close(client->fd);
 
-  printf("Client %d timed out after %ld seconds (fd=%d)\n", getpid(),
-         client->parent_server->timeout / 1000, client->fd);
-  fflush(stdout);
+  // printf("Client %d timed out after %ld seconds (fd=%d)\n", getpid(),
+  //       client->parent_server->timeout / 1000, client->fd);
+  // fflush(stdout);
+	
   free_client(client);
 
   my_connections--;
@@ -742,6 +743,7 @@ void worker_loop(int *listen_sockets) {
             }
             if (client->request_len >=
                 global_config->http->default_buffer_size - 1) {
+							printf("TOO MUCH DATA\n");
               close_connection(client);
               break;
             }
@@ -756,7 +758,7 @@ void worker_loop(int *listen_sockets) {
           }
 
           if (client->request_complete) {
-						// printf("Request: %s\n", client->request_buffer);
+						printf("Request: %s\n", client->request_buffer);
 
             int status_code;
             long long content_length;
