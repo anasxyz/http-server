@@ -31,7 +31,7 @@
 
 ## Prerequisites
 
-Before building and running http-server, make sure your system has the following:
+Before building and running, make sure your system has the following:
 
 - Linux-based OS (Ubuntu, Debian, Fedora, or similar).
 
@@ -92,7 +92,7 @@ $ http-server -s            # or --status
 
 To check the server application's version/build:
 ```
-$ http-server -v           # or --version
+$ http-server -v            # or --version
 ```
 
 ## Configuration
@@ -102,7 +102,7 @@ A typical configuration file can be found in `config/http-server.conf`. As you c
 #### Global directives:
 
 `max_connections` - maximum number of simultaneous that can be handled. 
-> 📌 This Normally would be higher than expected traffic for the server, but also keep ing mind system limits like file descriptor limits (`ulimit -n`).
+> 📌 This would normally be higher than the expected traffic for the server, but also keep in mind system limits (e.g., file descriptor limits `ulimit -n`).
 
 `worker_processes` - number of request handling processes to be spawned. 
 > 📌 This should generally be set equal to the number of CPU cores on the machine running the server (e.g., 4 for a quad core).
@@ -117,7 +117,7 @@ A typical configuration file can be found in `config/http-server.conf`. As you c
 Controls HTTP-wide defaults: `http.new ... http.end`   
 
 `default_buffer_size`, `body_buffer_size`, `headers_buffer_size` - memory buffer sizes for request/response handling.
-> 📌 Using larger buffers can help with big requests, but keep in mind that each connection consumes its own buffers. If too many clients are connected at the same time, this can increase memory usage and negatively affect overall performance.
+> 📌 Using larger buffers can help with big requests, but keep in mind that each connection allocates its own buffers in memory. If you set large buffers and also have many clients are connected at the same time, this can increase memory usage and may negatively affect overall performance.
 
 `mime` - path to MIME types definition file.
 
