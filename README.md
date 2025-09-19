@@ -117,7 +117,7 @@ A typical configuration file can be found in `config/http-server.conf`. As you c
 Controls HTTP-wide defaults: `http.new ... http.end`   
 
 `default_buffer_size`, `body_buffer_size`, `headers_buffer_size` - memory buffer sizes for request/response handling.
-> 📌 Using larger buffers can help with big requests, but keep in mind that each connection allocates its own buffers in memory. If you set large buffers and also have many clients are connected at the same time, this can increase memory usage and may negatively affect overall performance.
+> 📌 Using larger buffers can help with big requests and serving large files, but keep in mind that each connection allocates its own buffers in memory. If you set large buffers and also have many clients connected at the same time, this can increase memory usage and may negatively affect overall performance.
 
 `mime` - path to MIME types definition file.
 
